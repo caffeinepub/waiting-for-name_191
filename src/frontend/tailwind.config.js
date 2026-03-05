@@ -72,6 +72,10 @@ export default {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      fontFamily: {
+        display: ['"Cabinet Grotesk"', "system-ui", "sans-serif"],
+        body: ['"Mona Sans"', "system-ui", "sans-serif"],
+      },
       boxShadow: {
         xs: "0 1px 2px 0 rgba(0,0,0,0.05)",
       },
