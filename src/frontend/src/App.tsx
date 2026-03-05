@@ -5,7 +5,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ExternalLink, Settings, Sparkles, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Settings,
+  Sparkles,
+  User,
+  X,
+} from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -162,6 +170,22 @@ const headerVariants = {
     opacity: 1,
     y: 0,
     transition: { duration: 0.7, ease: "easeOut" as const },
+  },
+};
+
+const stepVariants = {
+  enter: { opacity: 0, y: 32, scale: 0.97 },
+  center: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { duration: 0.45, ease: "easeOut" as const },
+  },
+  exit: {
+    opacity: 0,
+    y: -24,
+    scale: 0.97,
+    transition: { duration: 0.3, ease: "easeIn" as const },
   },
 };
 
@@ -825,26 +849,112 @@ function SettingsPanel({
   );
 }
 
+// ─── IframePanel ──────────────────────────────────────────────────────────────
+function IframePanel({
+  item,
+  onClose,
+}: {
+  item: LinkItem;
+  onClose: () => void;
+}) {
+  // Close on Escape key
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      data-ocid="iframe.panel"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      className="fixed inset-0 z-[200] flex flex-col"
+      style={{ background: "oklch(0.04 0 0 / 0.96)" }}
+    >
+      {/* Top bar */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card/80 backdrop-blur-xl flex-shrink-0">
+        <button
+          type="button"
+          data-ocid="iframe.close_button"
+          onClick={onClose}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/60 hover:bg-secondary border border-border text-muted-foreground hover:text-foreground transition-all duration-150 text-xs font-body font-medium"
+          aria-label="Back to The Cosmos"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Back</span>
+        </button>
+
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <span className="font-display text-sm font-semibold text-foreground truncate">
+            {item.title}
+          </span>
+          <span className="hidden sm:block font-body text-[10px] text-muted-foreground/50 truncate">
+            {new URL(item.url).hostname}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          data-ocid="iframe.secondary_button"
+          onClick={() => window.open(item.url, "_blank", "noopener,noreferrer")}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/40 hover:bg-secondary border border-border text-muted-foreground hover:text-foreground transition-all duration-150 text-xs font-body"
+          aria-label="Open in new tab"
+          title="Open in new tab"
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">New Tab</span>
+        </button>
+
+        <button
+          type="button"
+          data-ocid="iframe.close_button"
+          onClick={onClose}
+          className="w-8 h-8 rounded-lg flex items-center justify-center bg-secondary/40 hover:bg-destructive/20 border border-border text-muted-foreground hover:text-destructive transition-all duration-150"
+          aria-label="Close"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* iframe */}
+      <div className="flex-1 relative">
+        <iframe
+          src={item.url}
+          title={item.title}
+          className="absolute inset-0 w-full h-full border-0"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+        />
+      </div>
+    </motion.div>
+  );
+}
+
 // ─── LinkCard ─────────────────────────────────────────────────────────────────
 function LinkCard({
   item,
   ocidPrefix,
   index,
+  onOpen,
 }: {
   item: LinkItem;
   ocidPrefix: string;
   index: number;
+  onOpen: (item: LinkItem) => void;
 }) {
   return (
-    <motion.a
-      href={item.url}
-      target="_blank"
-      rel="noopener noreferrer"
+    <motion.button
+      type="button"
       data-ocid={`${ocidPrefix}.item.${index + 1}`}
       variants={cardVariants}
       whileHover={{ scale: 1.02, y: -3 }}
       whileTap={{ scale: 0.97 }}
-      className={`group relative flex-shrink-0 w-72 rounded-2xl border border-border bg-card p-5 cursor-pointer transition-all duration-300 ${item.glowColor} overflow-hidden`}
+      onClick={() => onOpen(item)}
+      className={`group relative flex-shrink-0 w-72 rounded-2xl border border-border bg-card p-5 cursor-pointer transition-all duration-300 ${item.glowColor} overflow-hidden text-left`}
     >
       {/* Card gradient overlay */}
       <div
@@ -879,7 +989,197 @@ function LinkCard({
           <ExternalLink className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors duration-200" />
         </div>
       </div>
-    </motion.a>
+    </motion.button>
+  );
+}
+
+// ─── OnboardingOverlay ────────────────────────────────────────────────────────
+function OnboardingOverlay({
+  onComplete,
+  bgIndex,
+  onBgChange,
+}: {
+  onComplete: (username: string, bg: number) => void;
+  bgIndex: number;
+  onBgChange: (i: number) => void;
+}) {
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [username, setUsername] = useState("");
+  const [usernameError, setUsernameError] = useState(false);
+
+  const handleEnter = () => {
+    const trimmed = username.trim();
+    if (!trimmed) {
+      setUsernameError(true);
+      return;
+    }
+    onComplete(trimmed, bgIndex);
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+      {/* Dimming veil over background */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+
+      <AnimatePresence mode="wait">
+        {/* ── Step 1: Welcome ── */}
+        {step === 1 && (
+          <motion.div
+            key="step1"
+            variants={stepVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            className="relative z-10 w-full max-w-md"
+          >
+            <div className="rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl p-10 flex flex-col items-center text-center shadow-[0_0_120px_oklch(0.72_0.19_295/0.2)]">
+              {/* Decorative star cluster */}
+              <div className="mb-6 w-16 h-16 rounded-full bg-gradient-to-br from-violet-500/30 to-cyan-500/20 border border-white/10 flex items-center justify-center shadow-[0_0_40px_oklch(0.72_0.19_295/0.3)]">
+                <Sparkles className="w-7 h-7 text-white/80" />
+              </div>
+
+              <h1 className="font-display text-4xl md:text-5xl font-bold text-white tracking-tight leading-tight mb-3">
+                Welcome to{" "}
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[oklch(0.72_0.19_295)] via-[oklch(0.68_0.22_190)] to-[oklch(0.75_0.18_340)]">
+                  The Cosmos
+                </span>
+              </h1>
+              <p className="font-body text-sm text-white/50 mb-10 leading-relaxed">
+                A curated gateway to tools, classrooms, and digital worlds worth
+                exploring.
+              </p>
+
+              <Button
+                data-ocid="onboarding.primary_button"
+                onClick={() => setStep(2)}
+                className="w-full h-12 rounded-xl font-body font-semibold text-sm tracking-wide bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white border-0 shadow-[0_0_32px_oklch(0.72_0.19_295/0.35)] transition-all duration-200"
+              >
+                Continue
+              </Button>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── Step 2: Choose Background ── */}
+        {step === 2 && (
+          <motion.div
+            key="step2"
+            variants={stepVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            className="relative z-10 w-full max-w-lg"
+          >
+            <div className="rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl p-8 shadow-[0_0_120px_oklch(0.72_0.19_295/0.2)]">
+              <h2 className="font-display text-3xl font-bold text-white text-center mb-1 tracking-tight">
+                Choose Your Background
+              </h2>
+              <p className="font-body text-xs text-white/40 text-center mb-6 tracking-widest uppercase">
+                This becomes your cosmic atmosphere
+              </p>
+
+              <div className="grid grid-cols-2 gap-2 mb-8">
+                {BACKGROUNDS.map((bg, idx) => (
+                  <button
+                    key={bg.id}
+                    type="button"
+                    data-ocid={`onboarding.item.${idx + 1}`}
+                    onClick={() => onBgChange(bg.id)}
+                    className={`relative text-left px-4 py-3 rounded-xl border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                      bgIndex === bg.id
+                        ? "border-violet-500/70 bg-violet-500/15 text-white shadow-[0_0_16px_oklch(0.72_0.19_295/0.25)]"
+                        : "border-white/10 bg-white/5 text-white/60 hover:border-white/20 hover:bg-white/10"
+                    }`}
+                  >
+                    <span className="block font-body text-xs font-semibold leading-tight">
+                      {bg.label}
+                    </span>
+                    <span className="block font-body text-[10px] opacity-50 mt-0.5 leading-tight">
+                      {bg.desc}
+                    </span>
+                    {bgIndex === bg.id && (
+                      <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 rounded-full bg-violet-400" />
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              <Button
+                data-ocid="onboarding.primary_button"
+                onClick={() => setStep(3)}
+                className="w-full h-12 rounded-xl font-body font-semibold text-sm tracking-wide bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white border-0 shadow-[0_0_32px_oklch(0.72_0.19_295/0.3)] transition-all duration-200"
+              >
+                Continue
+              </Button>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── Step 3: Username ── */}
+        {step === 3 && (
+          <motion.div
+            key="step3"
+            variants={stepVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            className="relative z-10 w-full max-w-md"
+          >
+            <div className="rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl p-10 flex flex-col items-center text-center shadow-[0_0_120px_oklch(0.72_0.19_295/0.2)]">
+              <div className="mb-6 w-14 h-14 rounded-full bg-gradient-to-br from-cyan-500/30 to-violet-500/20 border border-white/10 flex items-center justify-center shadow-[0_0_30px_oklch(0.68_0.22_190/0.3)]">
+                <User className="w-6 h-6 text-white/80" />
+              </div>
+
+              <h2 className="font-display text-3xl font-bold text-white tracking-tight mb-1">
+                Username
+              </h2>
+              <p className="font-body text-sm text-white/40 mb-8 leading-relaxed">
+                What should The Cosmos call you?
+              </p>
+
+              <div className="w-full mb-2">
+                <Input
+                  data-ocid="onboarding.input"
+                  type="text"
+                  placeholder="Enter your username"
+                  value={username}
+                  onChange={(e) => {
+                    setUsername(e.target.value);
+                    if (usernameError) setUsernameError(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleEnter();
+                  }}
+                  maxLength={32}
+                  className={`h-12 rounded-xl bg-white/5 border font-body text-sm text-white placeholder:text-white/25 text-center focus-visible:ring-2 focus-visible:ring-violet-500/60 transition-all duration-200 ${
+                    usernameError
+                      ? "border-red-500/60 bg-red-500/5"
+                      : "border-white/15 hover:border-white/25 focus:border-violet-500/40"
+                  }`}
+                  autoFocus
+                />
+                {usernameError && (
+                  <p
+                    data-ocid="onboarding.error_state"
+                    className="mt-2 text-xs text-red-400 font-body"
+                  >
+                    Please enter a username to continue.
+                  </p>
+                )}
+              </div>
+
+              <Button
+                data-ocid="onboarding.primary_button"
+                onClick={handleEnter}
+                className="w-full h-12 mt-4 rounded-xl font-body font-semibold text-sm tracking-wide bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white border-0 shadow-[0_0_32px_oklch(0.72_0.19_295/0.3)] transition-all duration-200"
+              >
+                Enter The Cosmos
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -887,119 +1187,163 @@ function LinkCard({
 export default function App() {
   const [cursorColor, setCursorColor] = useState("#3b82f6");
   const [bgIndex, setBgIndex] = useState(0);
-  const [activeTab, setActiveTab] = useState<"links" | "movies">("links");
+  const [activeTab] = useState<"links">("links");
+  const [openedLink, setOpenedLink] = useState<LinkItem | null>(null);
+
+  // Onboarding state — null means "not yet checked"
+  const [username, setUsername] = useState<string | null>(null);
+  const [onboardingDone, setOnboardingDone] = useState(false);
+
+  // Read stored data on mount
+  useEffect(() => {
+    const storedUsername = localStorage.getItem("cosmos_username");
+    const storedBg = localStorage.getItem("cosmos_bg");
+    if (storedUsername) {
+      setUsername(storedUsername);
+      if (storedBg !== null) setBgIndex(Number(storedBg));
+      setOnboardingDone(true);
+    } else {
+      setOnboardingDone(false);
+    }
+  }, []);
+
+  const handleOnboardingComplete = (name: string, bg: number) => {
+    localStorage.setItem("cosmos_username", name);
+    localStorage.setItem("cosmos_bg", String(bg));
+    setUsername(name);
+    setBgIndex(bg);
+    setOnboardingDone(true);
+  };
+
+  // While checking localStorage, show nothing (avoids flash)
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  if (!hydrated) return null;
 
   return (
     <div className="relative min-h-screen bg-background overflow-hidden">
-      {/* Animated background */}
+      {/* Animated background — always rendered so onboarding can preview it */}
       <AnimatedBackground bgIndex={bgIndex} />
 
       {/* Cursor follower */}
       <CursorFollower color={cursorColor} />
 
-      {/* Settings panel */}
-      <SettingsPanel
-        cursorColor={cursorColor}
-        bgIndex={bgIndex}
-        onCursorColorChange={setCursorColor}
-        onBgChange={setBgIndex}
-      />
+      {/* Iframe panel — opens link inside The Cosmos */}
+      <AnimatePresence>
+        {openedLink && (
+          <IframePanel
+            key={openedLink.id}
+            item={openedLink}
+            onClose={() => setOpenedLink(null)}
+          />
+        )}
+      </AnimatePresence>
 
-      <div className="relative z-10 flex flex-col min-h-screen">
-        {/* Header */}
-        <header className="pt-16 pb-8 px-6 text-center">
+      {/* Onboarding overlay — shown until complete */}
+      <AnimatePresence>
+        {!onboardingDone && (
+          <OnboardingOverlay
+            onComplete={handleOnboardingComplete}
+            bgIndex={bgIndex}
+            onBgChange={setBgIndex}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Main app — always mounted but visually present only after onboarding */}
+      {onboardingDone && (
+        <>
+          {/* Settings panel */}
+          <SettingsPanel
+            cursorColor={cursorColor}
+            bgIndex={bgIndex}
+            onCursorColorChange={setCursorColor}
+            onBgChange={setBgIndex}
+          />
+
+          {/* Username badge — top-left corner */}
           <motion.div
-            variants={headerVariants}
-            initial="hidden"
-            animate="visible"
+            data-ocid="user.panel"
+            initial={{ opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.2, ease: "easeOut" }}
+            className="fixed top-4 left-4 z-50 flex items-center gap-2 px-3 py-2 rounded-full bg-card/70 backdrop-blur-md border border-border shadow-sm hover:bg-card/90 transition-all duration-200"
           >
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-primary/30 bg-primary/10 text-primary text-xs font-body font-medium tracking-widest uppercase mb-6">
-              <Sparkles className="w-3 h-3" />
-              <span>Collection</span>
-            </div>
-            <h1 className="font-display text-5xl md:text-7xl font-bold text-foreground tracking-tight leading-none mb-4">
-              The{" "}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[oklch(0.72_0.19_295)] via-[oklch(0.68_0.22_190)] to-[oklch(0.75_0.18_340)]">
-                Cosmos
-              </span>
-            </h1>
-            <p className="font-body text-muted-foreground text-lg max-w-md mx-auto leading-relaxed">
-              A curated gateway to tools, classrooms, and digital worlds worth
-              exploring.
-            </p>
+            <User className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+            <span className="font-body text-xs font-semibold text-foreground max-w-[140px] truncate">
+              {username}
+            </span>
           </motion.div>
-        </header>
 
-        {/* Tab navigation */}
-        <div className="flex justify-center mb-6 px-6">
-          <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card/50 backdrop-blur-sm p-1">
-            <button
-              type="button"
-              data-ocid="nav.links.tab"
-              onClick={() => setActiveTab("links")}
-              className={`px-5 py-1.5 rounded-full text-sm font-body font-medium transition-all duration-200 ${
-                activeTab === "links"
-                  ? "bg-primary/20 text-primary border border-primary/40 shadow-[0_0_12px_oklch(0.72_0.19_295/0.2)]"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Links
-            </button>
-            <button
-              type="button"
-              data-ocid="nav.movies.tab"
-              onClick={() => setActiveTab("movies")}
-              className={`px-5 py-1.5 rounded-full text-sm font-body font-medium transition-all duration-200 ${
-                activeTab === "movies"
-                  ? "bg-primary/20 text-primary border border-primary/40 shadow-[0_0_12px_oklch(0.72_0.19_295/0.2)]"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Movies
-            </button>
-          </div>
-        </div>
-
-        {/* Main content */}
-        <main className="flex-1 px-6 pb-12">
-          {activeTab === "links" && (
-            <AnimatePresence>
+          <div className="relative z-10 flex flex-col min-h-screen">
+            {/* Header */}
+            <header className="pt-16 pb-8 px-6 text-center">
               <motion.div
-                className="flex flex-wrap gap-4 justify-center"
-                variants={containerVariants}
+                variants={headerVariants}
                 initial="hidden"
                 animate="visible"
               >
-                {links.map((link, index) => (
-                  <LinkCard
-                    key={link.id}
-                    item={link}
-                    ocidPrefix="links"
-                    index={index}
-                  />
-                ))}
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-primary/30 bg-primary/10 text-primary text-xs font-body font-medium tracking-widest uppercase mb-6">
+                  <Sparkles className="w-3 h-3" />
+                  <span>Collection</span>
+                </div>
+                <h1 className="font-display text-5xl md:text-7xl font-bold text-foreground tracking-tight leading-none mb-4">
+                  The{" "}
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-[oklch(0.72_0.19_295)] via-[oklch(0.68_0.22_190)] to-[oklch(0.75_0.18_340)]">
+                    Cosmos
+                  </span>
+                </h1>
+                <p className="font-body text-muted-foreground text-lg max-w-md mx-auto leading-relaxed">
+                  A curated gateway to tools, classrooms, and digital worlds
+                  worth exploring.
+                </p>
               </motion.div>
-            </AnimatePresence>
-          )}
+            </header>
 
-          {activeTab === "movies" && <div data-ocid="movies.empty_state" />}
-        </main>
+            {/* Main content */}
+            <main className="flex-1 px-6 pb-12">
+              {activeTab === "links" && (
+                <AnimatePresence>
+                  <motion.div
+                    className="flex flex-wrap gap-4 justify-center"
+                    variants={containerVariants}
+                    initial="hidden"
+                    animate="visible"
+                  >
+                    {links.map((link, index) => (
+                      <LinkCard
+                        key={link.id}
+                        item={link}
+                        ocidPrefix="links"
+                        index={index}
+                        onOpen={setOpenedLink}
+                      />
+                    ))}
+                  </motion.div>
+                </AnimatePresence>
+              )}
+            </main>
 
-        {/* Footer */}
-        <footer className="relative z-10 py-8 px-6 text-center">
-          <p className="font-body text-xs text-muted-foreground/50">
-            © {new Date().getFullYear()}.{" "}
-            <a
-              href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(typeof window !== "undefined" ? window.location.hostname : "")}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-muted-foreground transition-colors duration-200"
-            >
-              Built with ♥ using caffeine.ai
-            </a>
-          </p>
-        </footer>
-      </div>
+            {/* Footer */}
+            <footer className="relative z-10 py-8 px-6 text-center">
+              <p className="font-body text-xs text-muted-foreground/50">
+                © {new Date().getFullYear()}.{" "}
+                <a
+                  href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(typeof window !== "undefined" ? window.location.hostname : "")}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-muted-foreground transition-colors duration-200"
+                >
+                  Built with ♥ using caffeine.ai
+                </a>
+              </p>
+            </footer>
+          </div>
+        </>
+      )}
     </div>
   );
 }
