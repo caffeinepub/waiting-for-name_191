@@ -62,6 +62,46 @@ const links: LinkItem[] = [
     glowColor: "group-hover:shadow-[0_0_40px_oklch(0.65_0.2_130/0.4)]",
     tag: "Algebra",
   },
+  {
+    id: "5",
+    title: "Frogies Arcade",
+    description:
+      "Expert tennis courses and training — elevate your game with professional guidance.",
+    url: "https://tennis.expert-courses.learn.kfa.cl/",
+    accent: "from-yellow-500/20 to-orange-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.78_0.18_80/0.4)]",
+    tag: "Sports",
+  },
+  {
+    id: "7",
+    title: "Lunnar V2",
+    description:
+      "Kubota Lab's lunar project — research and innovation from beyond the horizon.",
+    url: "https://lunar.kubota-lab.com/",
+    accent: "from-slate-500/20 to-gray-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.6_0.05_260/0.4)]",
+    tag: "Research",
+  },
+  {
+    id: "8",
+    title: "Void Network V5",
+    description:
+      "Void Network V5 — next-generation network platform pushing the boundaries of connectivity.",
+    url: "https://voidvcsa.blackbearshow.com/",
+    accent: "from-purple-500/20 to-indigo-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.55_0.22_285/0.4)]",
+    tag: "Network",
+  },
+  {
+    id: "9",
+    title: "EldurRocks",
+    description:
+      "EldurRocks — an education platform built for learning and growth.",
+    url: "https://edur.n43.pw/",
+    accent: "from-orange-500/20 to-red-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.7_0.22_40/0.4)]",
+    tag: "Education",
+  },
 ];
 
 // ─── Color Palette ─────────────────────────────────────────────────────────────
@@ -127,66 +167,44 @@ const headerVariants = {
 
 // ─── CursorFollower ────────────────────────────────────────────────────────────
 function CursorFollower({ color }: { color: string }) {
-  const [pos, setPos] = useState({ x: -200, y: -200 });
-  const [trailPos, setTrailPos] = useState({ x: -200, y: -200 });
-  const rafRef = useRef<number | null>(null);
-  const targetRef = useRef({ x: -200, y: -200 });
+  const [pos, setPos] = useState({ x: -400, y: -400 });
+  const [opacity, setOpacity] = useState(0);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
-      targetRef.current = { x: e.clientX, y: e.clientY };
       setPos({ x: e.clientX, y: e.clientY });
+      setOpacity(1);
+
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = setTimeout(() => {
+        setOpacity(0);
+      }, 120);
     };
+
     window.addEventListener("mousemove", onMove);
-
-    // Smooth trailing glow
-    const animateTrail = () => {
-      setTrailPos((prev) => ({
-        x: prev.x + (targetRef.current.x - prev.x) * 0.06,
-        y: prev.y + (targetRef.current.y - prev.y) * 0.06,
-      }));
-      rafRef.current = requestAnimationFrame(animateTrail);
-    };
-    rafRef.current = requestAnimationFrame(animateTrail);
-
     return () => {
       window.removeEventListener("mousemove", onMove);
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
   }, []);
 
   return (
-    <>
-      {/* Large trailing glow */}
-      <div
-        className="pointer-events-none fixed z-50"
-        style={{
-          left: trailPos.x,
-          top: trailPos.y,
-          width: 320,
-          height: 320,
-          transform: "translate(-50%, -50%)",
-          background: `radial-gradient(circle, ${color}28 0%, ${color}10 40%, transparent 70%)`,
-          filter: "blur(8px)",
-          transition: "background 0.4s ease",
-        }}
-      />
-      {/* Sharp cursor dot */}
-      <div
-        className="pointer-events-none fixed z-50"
-        style={{
-          left: pos.x,
-          top: pos.y,
-          width: 10,
-          height: 10,
-          transform: "translate(-50%, -50%)",
-          background: color,
-          borderRadius: "50%",
-          boxShadow: `0 0 12px 4px ${color}80`,
-          transition: "background 0.3s ease, box-shadow 0.3s ease",
-        }}
-      />
-    </>
+    <div
+      className="pointer-events-none fixed z-50"
+      style={{
+        left: pos.x,
+        top: pos.y,
+        width: 120,
+        height: 120,
+        transform: "translate(-50%, -50%)",
+        borderRadius: "50%",
+        background: `radial-gradient(circle, ${color}55 0%, ${color}33 30%, ${color}11 60%, transparent 80%)`,
+        filter: "blur(10px)",
+        opacity,
+        transition: "opacity 0.18s ease, background 0.3s ease",
+      }}
+    />
   );
 }
 
@@ -869,6 +887,7 @@ function LinkCard({
 export default function App() {
   const [cursorColor, setCursorColor] = useState("#3b82f6");
   const [bgIndex, setBgIndex] = useState(0);
+  const [activeTab, setActiveTab] = useState<"links" | "movies">("links");
 
   return (
     <div className="relative min-h-screen bg-background overflow-hidden">
@@ -911,25 +930,59 @@ export default function App() {
           </motion.div>
         </header>
 
-        {/* Main content — horizontal link cards */}
-        <main className="flex-1 px-6 pb-12">
-          <AnimatePresence>
-            <motion.div
-              className="flex flex-wrap gap-4 justify-center"
-              variants={containerVariants}
-              initial="hidden"
-              animate="visible"
+        {/* Tab navigation */}
+        <div className="flex justify-center mb-6 px-6">
+          <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card/50 backdrop-blur-sm p-1">
+            <button
+              type="button"
+              data-ocid="nav.links.tab"
+              onClick={() => setActiveTab("links")}
+              className={`px-5 py-1.5 rounded-full text-sm font-body font-medium transition-all duration-200 ${
+                activeTab === "links"
+                  ? "bg-primary/20 text-primary border border-primary/40 shadow-[0_0_12px_oklch(0.72_0.19_295/0.2)]"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
             >
-              {links.map((link, index) => (
-                <LinkCard
-                  key={link.id}
-                  item={link}
-                  ocidPrefix="links"
-                  index={index}
-                />
-              ))}
-            </motion.div>
-          </AnimatePresence>
+              Links
+            </button>
+            <button
+              type="button"
+              data-ocid="nav.movies.tab"
+              onClick={() => setActiveTab("movies")}
+              className={`px-5 py-1.5 rounded-full text-sm font-body font-medium transition-all duration-200 ${
+                activeTab === "movies"
+                  ? "bg-primary/20 text-primary border border-primary/40 shadow-[0_0_12px_oklch(0.72_0.19_295/0.2)]"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Movies
+            </button>
+          </div>
+        </div>
+
+        {/* Main content */}
+        <main className="flex-1 px-6 pb-12">
+          {activeTab === "links" && (
+            <AnimatePresence>
+              <motion.div
+                className="flex flex-wrap gap-4 justify-center"
+                variants={containerVariants}
+                initial="hidden"
+                animate="visible"
+              >
+                {links.map((link, index) => (
+                  <LinkCard
+                    key={link.id}
+                    item={link}
+                    ocidPrefix="links"
+                    index={index}
+                  />
+                ))}
+              </motion.div>
+            </AnimatePresence>
+          )}
+
+          {activeTab === "movies" && <div data-ocid="movies.empty_state" />}
         </main>
 
         {/* Footer */}
