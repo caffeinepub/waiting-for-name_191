@@ -1,45 +1,25 @@
 # The Cosmos Network
 
 ## Current State
-A full-stack React + Motoko app called "The Cosmos Network" with:
-- Onboarding screen (welcome, background picker, username)
-- Multiple link tabs: Links, Space, Day Dream X, Rosin, Galaxy V6, Cherri, ElderRocks
-- IframePanel for opening links inside The Cosmos with a multi-tab browser bar
-- ProxyContent for private searching
-- Settings panel for cursor color and animated background (40 backgrounds)
-- Username stored in localStorage, shown top-left
-- Animated canvas backgrounds, cursor glow follower
+The app is a link-launcher portal with animated backgrounds, a settings panel, an onboarding flow (Welcome → Choose Background → Username), bookmarks (localStorage, password-protected), and a group chat tab. The group chat is broken because it uses localStorage — groups and messages only exist in the creator's browser so other users can never see or join groups.
+
+The onboarding step 3 only has a Username field. The user wants a Password field added below the username so bookmarks are protected right from the start.
 
 ## Requested Changes (Diff)
 
 ### Add
-- A new "BookMarks" tab in the main tab navigation
-- BookMarks tab UI: a password-gated view where:
-  - On first visit (or when not unlocked), user sees a password prompt
-  - If a password has never been set, user is prompted to create one (set password flow)
-  - Once password is set and correct, bookmarks are shown
-  - User can add a bookmark (title + URL)
-  - User can delete individual bookmarks
-  - Bookmarks are stored in localStorage encrypted/hashed with the password
-  - Each new visit to the BookMarks tab requires entering the password to unlock
-  - Bookmarks persist across sessions (tied to the password)
-  - A "Lock" button to re-lock the bookmarks view
+- Backend canister APIs: createGroup, joinGroup (request), approveUser, denyUser, sendMessage, listGroups, getGroupMessages, getGroup — all persistent on-chain so any user can see and join groups.
+- Password field in onboarding step 3, below the username input, so the bookmarks password can be set during onboarding (optional at onboarding, but stored if provided).
 
 ### Modify
-- MAIN_TABS array: add `{ id: "bookmarks", label: "BookMarks" }` at the end
-- MainTab type: add `"bookmarks"` variant
-- AppInner render: add bookmarks tab case in AnimatePresence block
+- ChatTab: replace all localStorage group/message logic with backend actor calls. Groups are fetched from the canister. Joining sends a request to the canister. The creator approves/denies from the canister data. Messages are stored and fetched from the canister.
+- OnboardingOverlay step 3: add a password input field below the username field with placeholder "Bookmarks password (optional)". On completion, if password is provided, store it as the bookmarks password hash in localStorage.
 
 ### Remove
-- Nothing
+- localStorage-based group storage (GROUPS_KEY, getGroups, saveGroups, getGroupMessages, saveGroupMessages).
 
 ## Implementation Plan
-1. Add `bookmarks` to the `MainTab` union type and `MAIN_TABS` array
-2. Create a `BookmarkItem` interface: `{ id: string; title: string; url: string }`
-3. Implement password storage: hash the password with a simple deterministic hash (SHA-256 via Web Crypto API) and store the hash in localStorage under `cosmos_bm_pw_hash`. Store bookmarks JSON in localStorage under `cosmos_bookmarks` (plaintext is fine — the password just gates access in the UI).
-4. Build `BookmarksTab` component with three views:
-   - **Set Password view**: shown when no password hash is stored. User enters + confirms a new password. On submit, hash is saved.
-   - **Unlock view**: shown when password hash exists but tab is locked. User enters password, hash is compared. On match, unlock.
-   - **Bookmarks view**: shown when unlocked. Displays list of saved bookmarks as cards (title + URL). "Add Bookmark" button opens a small inline form (title + URL inputs). Each bookmark has a delete button. A "Lock" button re-locks the view.
-5. Clicking a bookmark card opens it via `setOpenedLink` (same as other link cards — opens in IframePanel inside The Cosmos).
-6. Wire up the bookmarks tab in the main render in AppInner, passing `setOpenedLink` as a prop.
+1. Generate Motoko backend with group chat data structures and APIs.
+2. Update ChatTab to use backend actor calls instead of localStorage.
+3. Add password field to onboarding step 3, wire it to save bookmark password hash on completion.
+4. Keep bookmarks themselves still in localStorage (they are per-user by design).

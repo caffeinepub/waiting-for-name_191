@@ -9,16 +9,22 @@ import { Input } from "@/components/ui/input";
 import {
   ArrowLeft,
   Bookmark,
+  Check,
+  Copy,
   ExternalLink,
   Lock,
+  LogIn,
+  MessageSquare,
   Plus,
   Search,
+  Send,
   Settings,
   Shield,
   Sparkles,
   Trash2,
   Unlock,
   User,
+  Users,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -3511,12 +3517,17 @@ function OnboardingOverlay({
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [username, setUsername] = useState("");
   const [usernameError, setUsernameError] = useState(false);
+  const [bmPassword, setBmPassword] = useState("");
 
-  const handleEnter = () => {
+  const handleEnter = async () => {
     const trimmed = username.trim();
     if (!trimmed) {
       setUsernameError(true);
       return;
+    }
+    if (bmPassword.trim()) {
+      const hash = await hashPassword(bmPassword.trim());
+      localStorage.setItem(BM_PW_KEY, hash);
     }
     onComplete(trimmed, bgIndex);
   };
@@ -3679,6 +3690,25 @@ function OnboardingOverlay({
                     Please enter a username to continue.
                   </p>
                 )}
+              </div>
+
+              {/* Bookmarks password (optional) */}
+              <div className="w-full mb-1">
+                <Input
+                  data-ocid="onboarding.bm_password.input"
+                  type="password"
+                  placeholder="Bookmarks password (optional)"
+                  value={bmPassword}
+                  onChange={(e) => setBmPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleEnter();
+                  }}
+                  className="h-12 rounded-xl bg-white/5 border border-white/15 hover:border-white/25 font-body text-sm text-white placeholder:text-white/25 text-center focus-visible:ring-2 focus-visible:ring-violet-500/60 focus:border-violet-500/40 transition-all duration-200"
+                />
+                <p className="mt-1.5 text-[11px] text-white/30 font-body flex items-center justify-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  Protects your saved bookmarks — leave blank to skip
+                </p>
               </div>
 
               <Button
@@ -4271,6 +4301,816 @@ function BookmarksTab({ onOpen }: { onOpen: (item: LinkItem) => void }) {
   );
 }
 
+// ─── ChatTab ──────────────────────────────────────────────────────────────────
+interface GroupData {
+  id: string; // room code (16-char hex)
+  name: string;
+  passwordHash: string;
+  creatorUsername: string;
+  members: string[];
+}
+
+interface ChatMessage {
+  id: string;
+  author: string;
+  text: string;
+  ts: number;
+}
+
+const MY_ROOMS_KEY = "cosmos_my_rooms";
+
+function getMyRooms(): GroupData[] {
+  try {
+    return JSON.parse(localStorage.getItem(MY_ROOMS_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveMyRooms(rooms: GroupData[]) {
+  localStorage.setItem(MY_ROOMS_KEY, JSON.stringify(rooms));
+}
+
+function getRoomMessages(roomId: string): ChatMessage[] {
+  try {
+    return JSON.parse(
+      localStorage.getItem(`cosmos_room_${roomId}_msgs`) ?? "[]",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveRoomMessages(roomId: string, msgs: ChatMessage[]) {
+  localStorage.setItem(`cosmos_room_${roomId}_msgs`, JSON.stringify(msgs));
+}
+
+async function computeRoomCode(
+  name: string,
+  passwordHash: string,
+): Promise<string> {
+  const raw = `${name.toLowerCase().trim()}||${passwordHash}`;
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(raw),
+  );
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
+}
+
+function encodeRoomCode(name: string, passwordHash: string): string {
+  return btoa(`${name}||${passwordHash}`).replace(/=+$/, "");
+}
+
+function decodeRoomCode(
+  code: string,
+): { name: string; passwordHash: string } | null {
+  try {
+    const padded = code + "=".repeat((4 - (code.length % 4)) % 4);
+    const decoded = atob(padded);
+    const sep = decoded.indexOf("||");
+    if (sep === -1) return null;
+    return {
+      name: decoded.slice(0, sep),
+      passwordHash: decoded.slice(sep + 2),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+type ChatView = "list" | "room";
+
+function ChatTab({ username }: { username: string }) {
+  const [view, setView] = useState<ChatView>("list");
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [roomGroup, setRoomGroup] = useState<GroupData | null>(null);
+
+  // Form state — create (inline in list)
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createPw, setCreatePw] = useState("");
+  const [createError, setCreateError] = useState("");
+
+  // Form state — join (inline in list)
+  const [showJoin, setShowJoin] = useState(false);
+  const [joinName, setJoinName] = useState("");
+  const [joinPw, setJoinPw] = useState("");
+  const [joinError, setJoinError] = useState("");
+
+  // Import room code
+  const [importCode, setImportCode] = useState("");
+  const [importError, setImportError] = useState("");
+
+  // Room list
+  const [rooms, setRooms] = useState<GroupData[]>(getMyRooms);
+
+  // Chat room state
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [msgText, setMsgText] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const broadcastRef = useRef<BroadcastChannel | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  // BroadcastChannel: sync messages across tabs on same browser
+  useEffect(() => {
+    if (view !== "room" || !selectedGroupId) return;
+    const channel = new BroadcastChannel(`cosmos_room_${selectedGroupId}`);
+    broadcastRef.current = channel;
+    channel.onmessage = (ev) => {
+      if (ev.data?.type === "new_message") {
+        setMessages(getRoomMessages(selectedGroupId));
+      }
+    };
+    return () => {
+      channel.close();
+      broadcastRef.current = null;
+    };
+  }, [view, selectedGroupId]);
+
+  // Poll localStorage every 2s in room view (fallback for cross-tab sync)
+  useEffect(() => {
+    if (view !== "room" || !selectedGroupId) return;
+    const refresh = () => setMessages(getRoomMessages(selectedGroupId));
+    refresh();
+    const interval = setInterval(refresh, 2000);
+    return () => clearInterval(interval);
+  }, [view, selectedGroupId]);
+
+  // Scroll to bottom when messages change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll trigger on message count
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  // Refresh room list when returning to list view
+  useEffect(() => {
+    if (view === "list") setRooms(getMyRooms());
+  }, [view]);
+
+  const openRoom = (group: GroupData) => {
+    setSelectedGroupId(group.id);
+    setRoomGroup(group);
+    setMessages(getRoomMessages(group.id));
+    setView("room");
+  };
+
+  const handleCreateGroup = async () => {
+    const name = createName.trim();
+    const pw = createPw.trim();
+    if (!name || !pw) {
+      setCreateError("Both fields are required.");
+      return;
+    }
+    const hash = await hashPassword(pw);
+    const roomCode = await computeRoomCode(name, hash);
+    const existing = getMyRooms();
+    if (existing.some((g) => g.id === roomCode)) {
+      setCreateError("You already have a group with this name and password.");
+      return;
+    }
+    const newRoom: GroupData = {
+      id: roomCode,
+      name,
+      passwordHash: hash,
+      creatorUsername: username,
+      members: [username],
+    };
+    const updated = [...existing, newRoom];
+    saveMyRooms(updated);
+    setRooms(updated);
+    setCreateName("");
+    setCreatePw("");
+    setCreateError("");
+    setShowCreate(false);
+    // Auto-open the room
+    openRoom(newRoom);
+  };
+
+  const handleJoinGroup = async () => {
+    const name = joinName.trim();
+    const pw = joinPw.trim();
+    if (!name || !pw) {
+      setJoinError("Both fields are required.");
+      return;
+    }
+    const hash = await hashPassword(pw);
+    const roomCode = await computeRoomCode(name, hash);
+    const existing = getMyRooms();
+    if (existing.some((g) => g.id === roomCode)) {
+      setJoinError("You are already in this group.");
+      return;
+    }
+    const newRoom: GroupData = {
+      id: roomCode,
+      name,
+      passwordHash: hash,
+      creatorUsername: "",
+      members: [username],
+    };
+    const updated = [...existing, newRoom];
+    saveMyRooms(updated);
+    setRooms(updated);
+    setJoinName("");
+    setJoinPw("");
+    setJoinError("");
+    setShowJoin(false);
+    openRoom(newRoom);
+  };
+
+  const handleImportCode = () => {
+    const code = importCode.trim();
+    if (!code) return;
+    const decoded = decodeRoomCode(code);
+    if (!decoded) {
+      setImportError("Invalid room code.");
+      return;
+    }
+    computeRoomCode(decoded.name, decoded.passwordHash).then((roomCode) => {
+      const existing = getMyRooms();
+      if (existing.some((g) => g.id === roomCode)) {
+        setImportError("You already have this room.");
+        return;
+      }
+      const newRoom: GroupData = {
+        id: roomCode,
+        name: decoded.name,
+        passwordHash: decoded.passwordHash,
+        creatorUsername: "",
+        members: [username],
+      };
+      const updated = [...existing, newRoom];
+      saveMyRooms(updated);
+      setRooms(updated);
+      setImportCode("");
+      setImportError("");
+      openRoom(newRoom);
+    });
+  };
+
+  const handleSendMessage = () => {
+    if (!msgText.trim() || !selectedGroupId) return;
+    const msg: ChatMessage = {
+      id: `${Date.now()}-${Math.random()}`,
+      author: username,
+      text: msgText.trim(),
+      ts: Date.now(),
+    };
+    const current = getRoomMessages(selectedGroupId);
+    const updated = [...current, msg];
+    saveRoomMessages(selectedGroupId, updated);
+    setMessages(updated);
+    setMsgText("");
+    // Broadcast to other tabs
+    broadcastRef.current?.postMessage({ type: "new_message" });
+  };
+
+  const handleCopyRoomCode = () => {
+    if (!roomGroup) return;
+    const code = encodeRoomCode(roomGroup.name, roomGroup.passwordHash);
+    navigator.clipboard.writeText(code).then(() => {
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    });
+  };
+
+  // ── Room view ─────────────────────────────────────────────────────────────
+  if (view === "room" && roomGroup) {
+    return (
+      <motion.div
+        key="chat-room"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.3 }}
+        className="max-w-2xl mx-auto flex flex-col"
+        style={{ height: "calc(100vh - 280px)", minHeight: "480px" }}
+        data-ocid="chat.panel"
+      >
+        {/* Room header */}
+        <div className="flex items-center gap-3 px-4 py-3 rounded-t-2xl bg-card/60 backdrop-blur-md border border-border border-b-0">
+          <button
+            type="button"
+            data-ocid="chat.close_button"
+            onClick={() => setView("list")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/50 hover:bg-secondary border border-border text-muted-foreground hover:text-foreground text-xs font-body font-medium transition-all duration-150"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Back
+          </button>
+          <MessageSquare className="w-4 h-4 text-primary flex-shrink-0" />
+          <span className="font-display text-base font-semibold text-foreground truncate flex-1">
+            {roomGroup.name}
+          </span>
+          {/* Share button — copies room code */}
+          <button
+            type="button"
+            data-ocid="chat.secondary_button"
+            onClick={handleCopyRoomCode}
+            title="Copy room code to share with friends"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary hover:text-foreground text-xs font-body font-medium transition-all duration-150"
+          >
+            {copiedCode ? (
+              <Check className="w-3.5 h-3.5" />
+            ) : (
+              <Copy className="w-3.5 h-3.5" />
+            )}
+            {copiedCode ? "Copied!" : "Share"}
+          </button>
+        </div>
+
+        {/* Info banner */}
+        <div className="bg-violet-500/8 border-x border-violet-500/20 px-4 py-2 flex items-start gap-2">
+          <Users className="w-3.5 h-3.5 text-violet-400 mt-0.5 flex-shrink-0" />
+          <p className="font-body text-[11px] text-violet-300/70 leading-relaxed">
+            Share the{" "}
+            <span className="text-violet-300 font-semibold">room code</span>{" "}
+            (tap Share above) with friends. They paste it in the Chat tab to
+            join this room and chat together.
+          </p>
+        </div>
+
+        {/* Messages area */}
+        <div className="flex-1 overflow-y-auto px-4 py-4 bg-card/40 backdrop-blur-sm border-x border-border space-y-3">
+          {messages.length === 0 ? (
+            <div
+              data-ocid="chat.empty_state"
+              className="flex flex-col items-center justify-center h-full gap-3 text-center py-16"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <MessageSquare className="w-5 h-5 text-primary/50" />
+              </div>
+              <p className="font-body text-sm text-muted-foreground">
+                No messages yet — start the conversation!
+              </p>
+            </div>
+          ) : (
+            messages.map((msg) => {
+              const isOwn = msg.author === username;
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex gap-2 ${isOwn ? "flex-row-reverse" : "flex-row"}`}
+                >
+                  <div
+                    className={`flex flex-col max-w-[70%] gap-1 ${isOwn ? "items-end" : "items-start"}`}
+                  >
+                    <span className="font-body text-[10px] text-muted-foreground/60 px-1">
+                      {msg.author} · {formatTime(msg.ts)}
+                    </span>
+                    <div
+                      className={`px-3 py-2 rounded-2xl font-body text-sm leading-relaxed ${
+                        isOwn
+                          ? "bg-primary/20 border border-primary/30 text-foreground rounded-tr-sm"
+                          : "bg-card/80 border border-border text-foreground rounded-tl-sm"
+                      }`}
+                    >
+                      {msg.text}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Message input */}
+        <div className="flex gap-2 px-4 py-3 rounded-b-2xl bg-card/60 backdrop-blur-md border border-border border-t-0">
+          <input
+            data-ocid="chat.input"
+            type="text"
+            placeholder="Type a message..."
+            value={msgText}
+            onChange={(e) => setMsgText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            className="flex-1 px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50 transition-all"
+          />
+          <button
+            type="button"
+            data-ocid="chat.submit_button"
+            onClick={handleSendMessage}
+            disabled={!msgText.trim()}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-primary/20 hover:bg-primary/30 border border-primary/40 text-foreground font-body text-sm font-semibold transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Send className="w-4 h-4" />
+            <span className="hidden sm:inline">Send</span>
+          </button>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // ── Group list view (default) ─────────────────────────────────────────────
+  return (
+    <motion.div
+      key="chat-list"
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+      className="max-w-2xl mx-auto space-y-5"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-2xl font-bold text-foreground flex items-center gap-2">
+          <MessageSquare className="w-6 h-6 text-primary" />
+          Group Chat
+        </h2>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-ocid="chat.secondary_button"
+            onClick={() => {
+              setShowJoin(!showJoin);
+              setShowCreate(false);
+              setJoinError("");
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 font-body text-xs font-semibold transition-all duration-200"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            Join
+          </button>
+          <button
+            type="button"
+            data-ocid="chat.primary_button"
+            onClick={() => {
+              setShowCreate(!showCreate);
+              setShowJoin(false);
+              setCreateError("");
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/35 text-foreground font-body text-xs font-semibold transition-all duration-200 shadow-[0_0_16px_oklch(0.72_0.19_295/0.12)]"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Create
+          </button>
+        </div>
+      </div>
+
+      {/* Create form (inline) */}
+      <AnimatePresence>
+        {showCreate && (
+          <motion.div
+            key="create-form"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-card/60 backdrop-blur-md border border-primary/30 rounded-2xl p-5 shadow-[0_0_30px_oklch(0.72_0.19_295/0.1)]">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 rounded-xl bg-primary/15 border border-primary/30">
+                  <Plus className="w-4 h-4 text-primary" />
+                </div>
+                <h3 className="font-display text-base font-bold text-foreground">
+                  Create a Group
+                </h3>
+              </div>
+              <div className="space-y-3">
+                <input
+                  data-ocid="chat.input"
+                  type="text"
+                  placeholder="Group name (e.g. Squad Room)"
+                  value={createName}
+                  onChange={(e) => {
+                    setCreateName(e.target.value);
+                    setCreateError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCreateGroup();
+                  }}
+                  className="w-full px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                />
+                <input
+                  data-ocid="chat.input"
+                  type="password"
+                  placeholder="Group password (shared with friends)"
+                  value={createPw}
+                  onChange={(e) => {
+                    setCreatePw(e.target.value);
+                    setCreateError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCreateGroup();
+                  }}
+                  className="w-full px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                />
+                <p className="text-[11px] text-muted-foreground/60 font-body">
+                  Friends join using the same group name + password. Share the{" "}
+                  <strong className="text-foreground/60">Room Code</strong> from
+                  inside the chat for easy access.
+                </p>
+                {createError && (
+                  <p
+                    data-ocid="chat.error_state"
+                    className="text-xs font-body text-red-400"
+                  >
+                    {createError}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    data-ocid="chat.primary_button"
+                    onClick={handleCreateGroup}
+                    className="flex-1 py-2.5 rounded-xl bg-primary/20 hover:bg-primary/30 border border-primary/40 text-foreground font-body font-semibold text-sm transition-all"
+                  >
+                    Create &amp; Enter
+                  </button>
+                  <button
+                    type="button"
+                    data-ocid="chat.cancel_button"
+                    onClick={() => setShowCreate(false)}
+                    className="px-4 py-2.5 rounded-xl bg-card/50 border border-border text-muted-foreground hover:text-foreground font-body text-sm transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Join form (inline) */}
+      <AnimatePresence>
+        {showJoin && (
+          <motion.div
+            key="join-form"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-card/60 backdrop-blur-md border border-cyan-500/30 rounded-2xl p-5 shadow-[0_0_30px_oklch(0.68_0.22_190/0.08)]">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30">
+                  <Users className="w-4 h-4 text-cyan-400" />
+                </div>
+                <h3 className="font-display text-base font-bold text-foreground">
+                  Join a Group
+                </h3>
+              </div>
+              <div className="space-y-3">
+                <input
+                  data-ocid="chat.input"
+                  type="text"
+                  placeholder="Group name (exact, same as creator used)"
+                  value={joinName}
+                  onChange={(e) => {
+                    setJoinName(e.target.value);
+                    setJoinError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleJoinGroup();
+                  }}
+                  className="w-full px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-all"
+                />
+                <input
+                  data-ocid="chat.input"
+                  type="password"
+                  placeholder="Group password"
+                  value={joinPw}
+                  onChange={(e) => {
+                    setJoinPw(e.target.value);
+                    setJoinError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleJoinGroup();
+                  }}
+                  className="w-full px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-all"
+                />
+                <p className="text-[11px] text-muted-foreground/60 font-body">
+                  Or paste a{" "}
+                  <strong className="text-foreground/60">Room Code</strong>{" "}
+                  below to join instantly.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    data-ocid="chat.search_input"
+                    type="text"
+                    placeholder="Paste Room Code here..."
+                    value={importCode}
+                    onChange={(e) => {
+                      setImportCode(e.target.value);
+                      setImportError("");
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleImportCode();
+                    }}
+                    className="flex-1 px-3 py-2 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/40 font-body text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-all"
+                  />
+                  <button
+                    type="button"
+                    data-ocid="chat.secondary_button"
+                    onClick={handleImportCode}
+                    className="px-3 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 font-body text-xs font-semibold transition-all"
+                  >
+                    Import
+                  </button>
+                </div>
+                {importError && (
+                  <p
+                    data-ocid="chat.error_state"
+                    className="text-xs font-body text-red-400"
+                  >
+                    {importError}
+                  </p>
+                )}
+                {joinError && (
+                  <p
+                    data-ocid="chat.error_state"
+                    className="text-xs font-body text-red-400"
+                  >
+                    {joinError}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    data-ocid="chat.primary_button"
+                    onClick={handleJoinGroup}
+                    className="flex-1 py-2.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-foreground font-body font-semibold text-sm transition-all"
+                  >
+                    Join &amp; Enter
+                  </button>
+                  <button
+                    type="button"
+                    data-ocid="chat.cancel_button"
+                    onClick={() => setShowJoin(false)}
+                    className="px-4 py-2.5 rounded-xl bg-card/50 border border-border text-muted-foreground hover:text-foreground font-body text-sm transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Room list */}
+      {rooms.length === 0 ? (
+        <div
+          data-ocid="chat.empty_state"
+          className="flex flex-col items-center justify-center py-20 gap-4 text-center"
+        >
+          <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center shadow-[0_0_40px_oklch(0.72_0.19_295/0.15)]">
+            <MessageSquare className="w-7 h-7 text-primary/50" />
+          </div>
+          <div>
+            <p className="font-body text-base font-semibold text-foreground mb-1">
+              No chat rooms yet
+            </p>
+            <p className="font-body text-sm text-muted-foreground max-w-xs">
+              Create a room, then share the{" "}
+              <strong className="text-foreground/60">Room Code</strong> with
+              friends so they can join.
+            </p>
+          </div>
+          <button
+            type="button"
+            data-ocid="chat.open_modal_button"
+            onClick={() => {
+              setShowCreate(true);
+              setShowJoin(false);
+            }}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary/20 hover:bg-primary/30 border border-primary/40 text-foreground font-body text-sm font-semibold transition-all duration-200 shadow-[0_0_20px_oklch(0.72_0.19_295/0.2)]"
+          >
+            <Plus className="w-4 h-4" />
+            Create First Room
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {rooms.map((room, idx) => (
+            <motion.div
+              key={room.id}
+              data-ocid={`chat.item.${idx + 1}`}
+              initial={{ opacity: 0, x: -12 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.25, delay: idx * 0.05 }}
+              className="flex items-center gap-4 px-5 py-4 rounded-2xl bg-card/60 backdrop-blur-md border border-border hover:border-primary/30 transition-all duration-200 shadow-[0_0_20px_oklch(0.04_0_0/0.5)]"
+            >
+              <div className="p-2.5 rounded-xl bg-primary/10 border border-primary/20 flex-shrink-0">
+                <MessageSquare className="w-4 h-4 text-primary/70" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-display text-base font-semibold text-foreground truncate">
+                  {room.name}
+                </p>
+                <p className="font-body text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  Password protected
+                  {room.creatorUsername === username && (
+                    <span className="ml-1 text-primary/60">· Creator</span>
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-ocid="chat.primary_button"
+                onClick={() => openRoom(room)}
+                className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/35 text-foreground font-body text-xs font-semibold transition-all duration-150 shadow-[0_0_12px_oklch(0.72_0.19_295/0.12)]"
+              >
+                Open
+              </button>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ─── School Bypass Links ──────────────────────────────────────────────────────
+const _schoolBypassLinks: LinkItem[] = [
+  {
+    id: "bypass-1",
+    title: "Google",
+    description:
+      "Access Google search and all its services — bypassed so it loads even when blocked.",
+    url: "https://google.com",
+    accent: "from-blue-500/20 to-cyan-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.65_0.22_260/0.4)]",
+    tag: "Search",
+  },
+  {
+    id: "bypass-2",
+    title: "Defly.io",
+    description:
+      "Team-based flying shooter game — build bases, shoot enemies, control territory.",
+    url: "https://defly.io",
+    accent: "from-green-500/20 to-emerald-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.65_0.2_130/0.4)]",
+    tag: "Game",
+  },
+  {
+    id: "bypass-3",
+    title: "Diep.io",
+    description:
+      "Tank battle arena — upgrade your tank, destroy shapes and players to level up.",
+    url: "https://diep.io",
+    accent: "from-orange-500/20 to-yellow-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.78_0.18_60/0.4)]",
+    tag: "Game",
+  },
+  {
+    id: "bypass-4",
+    title: "SafeShare",
+    description:
+      "Watch YouTube videos safely without ads, comments, or distractions — school-friendly.",
+    url: "https://safeshare.tv",
+    accent: "from-teal-500/20 to-green-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.68_0.18_175/0.4)]",
+    tag: "Video",
+  },
+  {
+    id: "bypass-5",
+    title: "ViewPure",
+    description:
+      "Clean, distraction-free YouTube player — just the video, nothing else.",
+    url: "https://viewpure.com",
+    accent: "from-purple-500/20 to-violet-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.6_0.22_280/0.4)]",
+    tag: "Video",
+  },
+  {
+    id: "bypass-6",
+    title: "Watchkin",
+    description:
+      "Kid-friendly YouTube viewer that filters inappropriate content and ads.",
+    url: "https://watchkin.com",
+    accent: "from-pink-500/20 to-rose-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.72_0.18_340/0.4)]",
+    tag: "Video",
+  },
+  {
+    id: "bypass-7",
+    title: "Y2meta",
+    description:
+      "Download YouTube videos and convert them to MP3 or MP4 — fast and free.",
+    url: "https://www.y2meta.com",
+    accent: "from-red-500/20 to-orange-600/10",
+    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.65_0.22_30/0.4)]",
+    tag: "Downloader",
+  },
+];
+
 // ─── AppInner ─────────────────────────────────────────────────────────────────
 type MainTab =
   | "links"
@@ -4280,7 +5120,8 @@ type MainTab =
   | "galaxyv6"
   | "cherri"
   | "elderrocks"
-  | "bookmarks";
+  | "bookmarks"
+  | "chat";
 
 const MAIN_TABS: { id: MainTab; label: string }[] = [
   { id: "links", label: "Links" },
@@ -4291,6 +5132,7 @@ const MAIN_TABS: { id: MainTab; label: string }[] = [
   { id: "cherri", label: "Cherri" },
   { id: "elderrocks", label: "ElderRocks" },
   { id: "bookmarks", label: "BookMarks" },
+  { id: "chat", label: "Chat" },
 ];
 
 function AppInner() {
@@ -4413,7 +5255,7 @@ function AppInner() {
             </header>
 
             {/* Tab navigation */}
-            <nav className="flex justify-center gap-2 mb-8 px-6">
+            <nav className="flex flex-wrap justify-center gap-2 mb-8 px-6">
               {MAIN_TABS.map((tab) => (
                 <button
                   key={tab.id}
@@ -4421,12 +5263,15 @@ function AppInner() {
                   data-ocid={`nav.${tab.id}.tab`}
                   onClick={() => setActiveTab(tab.id)}
                   className={[
-                    "px-5 py-2 rounded-full text-sm font-body font-semibold tracking-wide transition-all duration-200 border",
+                    "px-5 py-2 rounded-full text-sm font-body font-semibold tracking-wide transition-all duration-200 border flex items-center gap-1.5",
                     activeTab === tab.id
                       ? "bg-primary/20 border-primary/50 text-foreground shadow-[0_0_16px_oklch(0.72_0.19_295/0.25)]"
                       : "bg-card/40 border-border text-muted-foreground hover:border-border hover:bg-card/70 hover:text-foreground",
                   ].join(" ")}
                 >
+                  {tab.id === "chat" && (
+                    <MessageSquare className="w-3.5 h-3.5" />
+                  )}
                   {tab.label}
                 </button>
               ))}
@@ -4570,6 +5415,9 @@ function AppInner() {
                 )}
                 {activeTab === "bookmarks" && (
                   <BookmarksTab key="bookmarks" onOpen={setOpenedLink} />
+                )}
+                {activeTab === "chat" && (
+                  <ChatTab key="chat" username={username ?? "Guest"} />
                 )}
               </AnimatePresence>
             </main>
