@@ -9,13 +9,103 @@ import { Input } from "@/components/ui/input";
 import {
   ArrowLeft,
   ExternalLink,
+  Plus,
+  Search,
   Settings,
+  Shield,
   Sparkles,
   User,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("The Cosmos crashed:", error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          style={{
+            minHeight: "100vh",
+            background: "#050505",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "column",
+            gap: "16px",
+            color: "#fff",
+            fontFamily: "sans-serif",
+            padding: "24px",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: "2rem" }}>⚠️</div>
+          <div style={{ fontSize: "1.25rem", fontWeight: 700 }}>
+            Something went wrong in The Cosmos
+          </div>
+          <div
+            style={{ fontSize: "0.875rem", color: "#888", maxWidth: "400px" }}
+          >
+            {this.state.error?.message ?? "An unexpected error occurred."}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+            style={{
+              marginTop: "12px",
+              padding: "10px 24px",
+              borderRadius: "10px",
+              border: "1px solid #333",
+              background: "#111",
+              color: "#fff",
+              cursor: "pointer",
+              fontSize: "0.875rem",
+            }}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ─── URL Helper ───────────────────────────────────────────────────────────────
+function getHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface LinkItem {
@@ -849,6 +939,268 @@ function SettingsPanel({
   );
 }
 
+// ─── Tab Types ────────────────────────────────────────────────────────────────
+interface BrowserTab {
+  id: string;
+  title: string;
+  url: string | null;
+  isProxy: boolean;
+}
+
+const PROXY_TAB_ID = "proxy";
+
+function createTab(item: LinkItem): BrowserTab {
+  return {
+    id: `tab-${item.id}-${Date.now()}`,
+    title: item.title,
+    url: item.url,
+    isProxy: false,
+  };
+}
+
+const proxyTab: BrowserTab = {
+  id: PROXY_TAB_ID,
+  title: "Proxy",
+  url: null,
+  isProxy: true,
+};
+
+// ─── ProxyContent ─────────────────────────────────────────────────────────────
+type ProxyMethod = "ddg" | "google" | "bing";
+
+const PROXY_METHODS: { id: ProxyMethod; label: string; desc: string }[] = [
+  { id: "ddg", label: "DuckDuckGo HTML", desc: "Private search, no tracking" },
+  {
+    id: "google",
+    label: "Google Translate",
+    desc: "Bypasses most filters via translate.google.com",
+  },
+  {
+    id: "bing",
+    label: "Bing Cache",
+    desc: "Cached pages via Bing's cache server",
+  },
+];
+
+const SUGGESTION_CHIPS = [
+  "news",
+  "music",
+  "games",
+  "movies",
+  "sports",
+  "youtube",
+  "reddit",
+  "wikipedia",
+  "discord",
+];
+
+function isLikelyUrl(input: string): boolean {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://"))
+    return true;
+  // Has a dot and no spaces — likely a domain
+  if (!trimmed.includes(" ") && trimmed.includes(".")) return true;
+  return false;
+}
+
+function buildProxyUrl(input: string, method: ProxyMethod): string {
+  const trimmed = input.trim();
+  const asUrl = isLikelyUrl(trimmed)
+    ? trimmed.startsWith("http")
+      ? trimmed
+      : `https://${trimmed}`
+    : null;
+
+  if (method === "ddg") {
+    const q = asUrl ?? trimmed;
+    return `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}&kp=-2&k1=-1&kl=wt-wt`;
+  }
+  if (method === "google") {
+    const target =
+      asUrl ??
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(trimmed)}&kp=-2&k1=-1&kl=wt-wt`;
+    return `https://translate.google.com/translate?sl=auto&tl=en&u=${encodeURIComponent(target)}`;
+  }
+  if (method === "bing") {
+    const q = asUrl ?? trimmed;
+    return `https://cc.bingj.com/cache.aspx?q=${encodeURIComponent(q)}&url=`;
+  }
+  return "";
+}
+
+function ProxyContent() {
+  const [query, setQuery] = useState("");
+  const [searchUrl, setSearchUrl] = useState<string | null>(null);
+  const [method, setMethod] = useState<ProxyMethod>("ddg");
+  const [addressBar, setAddressBar] = useState("");
+
+  const handleGo = () => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    const url = buildProxyUrl(trimmed, method);
+    setSearchUrl(url);
+    setAddressBar(url);
+  };
+
+  const handleSuggestion = (term: string) => {
+    const url = buildProxyUrl(term, method);
+    setQuery(term);
+    setSearchUrl(url);
+    setAddressBar(url);
+  };
+
+  return (
+    <div data-ocid="proxy.panel" className="flex flex-col h-full">
+      {/* ── Header bar ── */}
+      <div className="flex-shrink-0 px-4 py-3 border-b border-violet-500/20 bg-[oklch(0.08_0.04_295/0.95)] backdrop-blur-xl">
+        {/* Title row */}
+        <div className="flex items-center gap-2 mb-2.5">
+          <Shield className="w-4 h-4 text-violet-400 flex-shrink-0" />
+          <span className="font-display text-sm font-semibold text-violet-300">
+            Proxy — Bypass &amp; Browse
+          </span>
+          <span className="ml-auto font-body text-[10px] text-violet-400/40 tracking-wide">
+            Nothing stored in history
+          </span>
+        </div>
+
+        {/* Proxy method selector */}
+        <div className="flex gap-1.5 mb-3">
+          {PROXY_METHODS.map((pm, i) => (
+            <button
+              key={pm.id}
+              type="button"
+              data-ocid={
+                `proxy.tab.${i + 1}` as
+                  | "proxy.tab.1"
+                  | "proxy.tab.2"
+                  | "proxy.tab.3"
+              }
+              title={pm.desc}
+              onClick={() => setMethod(pm.id)}
+              className={[
+                "flex-1 px-2 py-1.5 rounded-lg text-[10px] font-body font-semibold tracking-wide transition-all duration-150 border",
+                method === pm.id
+                  ? "bg-violet-600/30 border-violet-500/60 text-violet-200 shadow-[0_0_12px_oklch(0.52_0.26_295/0.25)]"
+                  : "bg-violet-900/10 border-violet-500/15 text-violet-400/60 hover:border-violet-500/30 hover:text-violet-300 hover:bg-violet-900/20",
+              ].join(" ")}
+            >
+              {pm.label}
+            </button>
+          ))}
+        </div>
+
+        {/* URL / search input + Go button */}
+        <div className="flex gap-2">
+          <Input
+            data-ocid="proxy.search_input"
+            type="text"
+            placeholder={
+              method === "ddg"
+                ? "Search or enter a URL..."
+                : method === "google"
+                  ? "URL or search query to route through Google Translate..."
+                  : "Search or enter a URL to load via Bing cache..."
+            }
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleGo();
+            }}
+            className="flex-1 h-9 rounded-lg bg-violet-900/20 border-violet-500/30 text-foreground placeholder:text-violet-400/30 font-body text-sm focus-visible:ring-violet-500/50 focus-visible:border-violet-500/60 transition-all duration-150"
+          />
+          <Button
+            data-ocid="proxy.submit_button"
+            onClick={handleGo}
+            className="h-9 px-4 rounded-lg bg-violet-600 hover:bg-violet-500 text-white border-0 font-body text-sm font-medium shadow-[0_0_20px_oklch(0.52_0.26_295/0.35)] transition-all duration-150 flex-shrink-0"
+          >
+            <Search className="w-3.5 h-3.5 mr-1.5" />
+            Go
+          </Button>
+        </div>
+
+        {/* Address bar (shows loaded URL) */}
+        {addressBar && (
+          <div className="mt-2 flex items-center gap-1.5">
+            <span className="font-body text-[9px] text-violet-500/50 uppercase tracking-widest flex-shrink-0">
+              Loaded:
+            </span>
+            <span className="font-body text-[9px] text-violet-400/40 truncate">
+              {addressBar}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Content area ── */}
+      <div className="flex-1 relative">
+        {searchUrl ? (
+          <iframe
+            key={searchUrl}
+            src={searchUrl}
+            title="Proxy Search"
+            className="absolute inset-0 w-full h-full border-0 bg-white"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation"
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full gap-5 text-center px-6 py-8 overflow-y-auto">
+            {/* Icon */}
+            <div className="w-20 h-20 rounded-full bg-violet-900/30 border border-violet-500/20 flex items-center justify-center shadow-[0_0_60px_oklch(0.52_0.26_295/0.3)] flex-shrink-0">
+              <Shield className="w-9 h-9 text-violet-400" />
+            </div>
+
+            {/* Headline */}
+            <div>
+              <h3 className="font-display text-xl font-semibold text-violet-200 mb-1.5">
+                Private &amp; Unblocked Browsing
+              </h3>
+              <p className="font-body text-sm text-violet-400/60 max-w-xs leading-relaxed">
+                Search or open any URL. Switch proxy methods to bypass network
+                filters.
+              </p>
+            </div>
+
+            {/* Bypass tip card */}
+            <div className="w-full max-w-sm rounded-xl border border-violet-500/20 bg-violet-900/15 px-4 py-3 text-left">
+              <div className="flex items-start gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-violet-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-body text-xs font-semibold text-violet-300 mb-0.5">
+                    Bypass Tip
+                  </p>
+                  <p className="font-body text-[11px] text-violet-400/60 leading-relaxed">
+                    This proxy routes searches through trusted domains that
+                    bypass most network filters like iboss cloud. If one method
+                    doesn't work, try switching —{" "}
+                    <strong className="text-violet-300">
+                      Google Translate
+                    </strong>{" "}
+                    is most effective on restrictive networks.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Suggestion chips */}
+            <div className="flex flex-wrap gap-2 justify-center">
+              {SUGGESTION_CHIPS.map((term) => (
+                <button
+                  key={term}
+                  type="button"
+                  onClick={() => handleSuggestion(term)}
+                  className="px-3 py-1.5 rounded-full text-xs font-body font-medium bg-violet-900/30 border border-violet-500/20 text-violet-300 hover:bg-violet-800/40 hover:border-violet-400/40 transition-all duration-150 capitalize"
+                >
+                  {term}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── IframePanel ──────────────────────────────────────────────────────────────
 function IframePanel({
   item,
@@ -857,14 +1209,85 @@ function IframePanel({
   item: LinkItem;
   onClose: () => void;
 }) {
+  // Initialize tabs: the opened link + always-present proxy tab
+  const firstTab = useRef<BrowserTab>(createTab(item));
+  const [tabs, setTabs] = useState<BrowserTab[]>(() => [
+    firstTab.current,
+    proxyTab,
+  ]);
+  const [activeTabId, setActiveTabId] = useState<string>(
+    () => firstTab.current.id,
+  );
+  const [showAddDropdown, setShowAddDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   // Close on Escape key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        if (showAddDropdown) {
+          setShowAddDropdown(false);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, showAddDropdown]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!showAddDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
+        setShowAddDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showAddDropdown]);
+
+  const openNewTab = (linkItem: LinkItem) => {
+    const newTab = createTab(linkItem);
+    setTabs((prev) => {
+      // Insert before proxy tab
+      const withoutProxy = prev.filter((t) => t.id !== PROXY_TAB_ID);
+      return [...withoutProxy, newTab, proxyTab];
+    });
+    setActiveTabId(newTab.id);
+    setShowAddDropdown(false);
+  };
+
+  const closeTab = (tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (tabId === PROXY_TAB_ID) return; // proxy tab can't be closed
+    setTabs((prev) => {
+      const remaining = prev.filter((t) => t.id !== tabId);
+      // If we closed the active tab, switch to the one before it
+      if (activeTabId === tabId) {
+        const closedIdx = prev.findIndex((t) => t.id === tabId);
+        const newActive = remaining[Math.max(0, closedIdx - 1)];
+        if (newActive) setActiveTabId(newActive.id);
+      }
+      // If only proxy tab remains, close the whole panel
+      if (remaining.length === 1 && remaining[0].id === PROXY_TAB_ID) {
+        onClose();
+        return remaining;
+      }
+      return remaining;
+    });
+  };
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+
+  // Links that aren't already open in a tab
+  const availableLinks = links.filter(
+    (l) => !tabs.some((t) => t.url === l.url),
+  );
 
   return (
     <motion.div
@@ -874,61 +1297,187 @@ function IframePanel({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
       className="fixed inset-0 z-[200] flex flex-col"
-      style={{ background: "oklch(0.04 0 0 / 0.96)" }}
+      style={{ background: "oklch(0.04 0 0 / 0.97)" }}
     >
-      {/* Top bar */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card/80 backdrop-blur-xl flex-shrink-0">
+      {/* ── Top control bar ── */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card/80 backdrop-blur-xl flex-shrink-0">
         <button
           type="button"
           data-ocid="iframe.close_button"
           onClick={onClose}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/60 hover:bg-secondary border border-border text-muted-foreground hover:text-foreground transition-all duration-150 text-xs font-body font-medium"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/60 hover:bg-secondary border border-border text-muted-foreground hover:text-foreground transition-all duration-150 text-xs font-body font-medium flex-shrink-0"
           aria-label="Back to The Cosmos"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back</span>
+          <span className="hidden sm:inline">Back</span>
         </button>
 
-        <div className="flex-1 min-w-0 flex items-center gap-2">
-          <span className="font-display text-sm font-semibold text-foreground truncate">
-            {item.title}
-          </span>
-          <span className="hidden sm:block font-body text-[10px] text-muted-foreground/50 truncate">
-            {new URL(item.url).hostname}
-          </span>
+        {/* Current tab info */}
+        <div className="flex-1 min-w-0 flex items-center gap-2 px-2">
+          {activeTab?.isProxy ? (
+            <>
+              <Shield className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+              <span className="font-display text-sm font-semibold text-violet-300 truncate">
+                Proxy Search
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="font-display text-sm font-semibold text-foreground truncate">
+                {activeTab?.title}
+              </span>
+              {activeTab?.url && (
+                <span className="hidden sm:block font-body text-[10px] text-muted-foreground/50 truncate">
+                  {getHostname(activeTab.url)}
+                </span>
+              )}
+            </>
+          )}
         </div>
 
-        <button
-          type="button"
-          data-ocid="iframe.secondary_button"
-          onClick={() => window.open(item.url, "_blank", "noopener,noreferrer")}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/40 hover:bg-secondary border border-border text-muted-foreground hover:text-foreground transition-all duration-150 text-xs font-body"
-          aria-label="Open in new tab"
-          title="Open in new tab"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">New Tab</span>
-        </button>
+        {/* Open in new browser tab (only for non-proxy) */}
+        {activeTab && !activeTab.isProxy && activeTab.url && (
+          <button
+            type="button"
+            data-ocid="iframe.secondary_button"
+            onClick={() =>
+              window.open(activeTab.url!, "_blank", "noopener,noreferrer")
+            }
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/40 hover:bg-secondary border border-border text-muted-foreground hover:text-foreground transition-all duration-150 text-xs font-body flex-shrink-0"
+            aria-label="Open in new browser tab"
+            title="Open in new browser tab"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">New Tab</span>
+          </button>
+        )}
 
         <button
           type="button"
           data-ocid="iframe.close_button"
           onClick={onClose}
-          className="w-8 h-8 rounded-lg flex items-center justify-center bg-secondary/40 hover:bg-destructive/20 border border-border text-muted-foreground hover:text-destructive transition-all duration-150"
-          aria-label="Close"
+          className="w-8 h-8 rounded-lg flex items-center justify-center bg-secondary/40 hover:bg-destructive/20 border border-border text-muted-foreground hover:text-destructive transition-all duration-150 flex-shrink-0"
+          aria-label="Close panel"
         >
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      {/* iframe */}
-      <div className="flex-1 relative">
-        <iframe
-          src={item.url}
-          title={item.title}
-          className="absolute inset-0 w-full h-full border-0"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-        />
+      {/* ── Tab bar ── */}
+      <div className="flex items-end gap-0 px-2 pt-1.5 border-b border-border bg-[oklch(0.06_0.01_0)] flex-shrink-0 overflow-x-auto scrollbar-none">
+        {tabs.map((tab, idx) => {
+          const isActive = tab.id === activeTabId;
+          const isProxy = tab.id === PROXY_TAB_ID;
+
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              data-ocid={isProxy ? "iframe.proxy_tab" : `iframe.tab.${idx + 1}`}
+              onClick={() => setActiveTabId(tab.id)}
+              className={[
+                "group relative flex items-center gap-1.5 px-3 py-2 min-w-0 max-w-[160px] rounded-t-lg text-xs font-body font-medium transition-all duration-150 flex-shrink-0 cursor-pointer select-none",
+                isActive
+                  ? isProxy
+                    ? "bg-violet-900/50 border border-b-0 border-violet-500/40 text-violet-200 shadow-[inset_0_1px_0_oklch(0.72_0.26_295/0.3)]"
+                    : "bg-card border border-b-0 border-border text-foreground shadow-[inset_0_1px_0_oklch(0.72_0.19_295/0.15)]"
+                  : isProxy
+                    ? "text-violet-400/70 hover:text-violet-300 hover:bg-violet-900/20"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-secondary/30",
+              ].join(" ")}
+              style={isActive ? { marginBottom: "-1px", zIndex: 1 } : {}}
+            >
+              {isProxy && (
+                <Shield className="w-3 h-3 flex-shrink-0 text-violet-400" />
+              )}
+              <span className="truncate">{tab.title}</span>
+              {!isProxy && (
+                <button
+                  type="button"
+                  onClick={(e) => closeTab(tab.id, e)}
+                  className="flex-shrink-0 w-4 h-4 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-all duration-100 ml-0.5"
+                  aria-label={`Close ${tab.title} tab`}
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              )}
+            </button>
+          );
+        })}
+
+        {/* Add new tab button */}
+        <div className="relative ml-1 flex-shrink-0" ref={dropdownRef}>
+          <button
+            type="button"
+            data-ocid="iframe.add_tab_button"
+            onClick={() => setShowAddDropdown((v) => !v)}
+            className="w-7 h-7 mb-1.5 rounded-lg flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary/40 border border-transparent hover:border-border transition-all duration-150"
+            aria-label="Open new tab"
+            title="Open a link in a new tab"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Add tab dropdown */}
+          <AnimatePresence>
+            {showAddDropdown && (
+              <motion.div
+                data-ocid="iframe.add_tab_dropdown"
+                initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                transition={{ duration: 0.15 }}
+                className="absolute top-full left-0 mt-1 w-56 bg-card/95 backdrop-blur-xl border border-border rounded-xl shadow-[0_8px_40px_oklch(0.04_0_0/0.8)] z-50 overflow-hidden py-1"
+              >
+                <p className="px-3 py-1.5 text-[10px] font-body font-semibold tracking-widest uppercase text-muted-foreground/50">
+                  Open in new tab
+                </p>
+                {availableLinks.length === 0 ? (
+                  <p className="px-3 py-2 text-xs font-body text-muted-foreground/50 italic">
+                    All links are already open
+                  </p>
+                ) : (
+                  availableLinks.map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => openNewTab(l)}
+                      className="w-full text-left px-3 py-2 text-xs font-body text-foreground/80 hover:text-foreground hover:bg-secondary/40 transition-all duration-100 flex items-center gap-2"
+                    >
+                      <ExternalLink className="w-3 h-3 text-muted-foreground/50 flex-shrink-0" />
+                      <span className="truncate">{l.title}</span>
+                    </button>
+                  ))
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Right spacer */}
+        <div className="flex-1" />
+      </div>
+
+      {/* ── Content area ── */}
+      <div className="flex-1 relative overflow-hidden">
+        {tabs.map((tab) => (
+          <div
+            key={tab.id}
+            className="absolute inset-0"
+            style={{ display: tab.id === activeTabId ? "block" : "none" }}
+          >
+            {tab.isProxy ? (
+              <ProxyContent />
+            ) : tab.url ? (
+              <iframe
+                src={tab.url}
+                title={tab.title}
+                className="w-full h-full border-0"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+              />
+            ) : null}
+          </div>
+        ))}
       </div>
     </motion.div>
   );
@@ -974,7 +1523,7 @@ function LinkCard({
             </span>
             <span className="block w-1 h-1 rounded-full bg-border flex-shrink-0" />
             <span className="font-body text-[10px] text-muted-foreground/50 truncate">
-              {new URL(item.url).hostname}
+              {getHostname(item.url)}
             </span>
           </div>
           <h2 className="font-display text-lg font-semibold text-foreground group-hover:text-white transition-colors duration-200 mb-1.5 leading-tight">
@@ -1183,8 +1732,8 @@ function OnboardingOverlay({
   );
 }
 
-// ─── App ──────────────────────────────────────────────────────────────────────
-export default function App() {
+// ─── AppInner ─────────────────────────────────────────────────────────────────
+function AppInner() {
   const [cursorColor, setCursorColor] = useState("#3b82f6");
   const [bgIndex, setBgIndex] = useState(0);
   const [activeTab] = useState<"links">("links");
@@ -1345,5 +1894,14 @@ export default function App() {
         </>
       )}
     </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
   );
 }
