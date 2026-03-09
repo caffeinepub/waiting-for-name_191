@@ -350,6 +350,7 @@ const BACKGROUNDS = [
   { id: 37, label: "Pumpkin Glow", desc: "Glowing jack-o-lantern faces" },
   { id: 38, label: "Spider Web", desc: "Growing spider web lines" },
   { id: 39, label: "Fog Creep", desc: "Eerie fog rolling in" },
+  { id: 40, label: "Alizzay Text", desc: "Scrolling Alizzay Garza Is Stupid" },
 ];
 
 // ─── Motion Variants ──────────────────────────────────────────────────────────
@@ -2596,6 +2597,40 @@ function AnimatedBackground({ bgIndex }: { bgIndex: number }) {
           ctx.ellipse(tendrilX, tendrilY, 80 + fx * 20, 30, 0, 0, Math.PI * 2);
           ctx.fillStyle = `rgba(160,190,200,${0.1 + 0.04 * Math.sin(t * 0.4 + fx)})`;
           ctx.fill();
+        }
+        ctx.restore();
+        rafRef.current = requestAnimationFrame(draw);
+      };
+      rafRef.current = requestAnimationFrame(draw);
+    }
+
+    if (bgIndex === 40) {
+      const text = "Alizzay Garza Is Stupid";
+      const draw = (t: number) => {
+        const W = canvas.width;
+        const H = canvas.height;
+        ctx.fillStyle = "rgba(0,0,0,0.18)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.save();
+        const fontSize = Math.max(28, W / 18);
+        ctx.font = `bold ${fontSize}px monospace`;
+        const cols = Math.ceil(W / (fontSize * text.length * 0.62)) + 2;
+        const rows = Math.ceil(H / (fontSize * 1.8)) + 2;
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const hue = (r * 40 + c * 17 + t * 30) % 360;
+            ctx.fillStyle = `hsla(${hue},80%,60%,${0.13 + 0.07 * Math.sin(t + r + c)})`;
+            const offsetX = r % 2 === 0 ? 0 : fontSize * text.length * 0.31;
+            const scrollX = (t * 18) % (fontSize * text.length * 0.62);
+            ctx.fillText(
+              text,
+              c * fontSize * text.length * 0.62 -
+                scrollX +
+                offsetX -
+                fontSize * text.length * 0.62,
+              r * fontSize * 1.8 + fontSize,
+            );
+          }
         }
         ctx.restore();
         rafRef.current = requestAnimationFrame(draw);
