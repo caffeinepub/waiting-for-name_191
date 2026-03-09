@@ -13,8 +13,6 @@ import {
   Copy,
   ExternalLink,
   Lock,
-  LogIn,
-  MessageSquare,
   Plus,
   Search,
   Send,
@@ -24,7 +22,6 @@ import {
   Trash2,
   Unlock,
   User,
-  Users,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -4301,815 +4298,475 @@ function BookmarksTab({ onOpen }: { onOpen: (item: LinkItem) => void }) {
   );
 }
 
-// ─── ChatTab ──────────────────────────────────────────────────────────────────
-interface GroupData {
-  id: string; // room code (16-char hex)
-  name: string;
-  passwordHash: string;
-  creatorUsername: string;
-  members: string[];
-}
-
-interface ChatMessage {
+// ─── CosmosAI ─────────────────────────────────────────────────────────────────
+interface AIChatMessage {
   id: string;
-  author: string;
+  role: "user" | "assistant";
   text: string;
   ts: number;
 }
 
-const MY_ROOMS_KEY = "cosmos_my_rooms";
+const COSMOS_JOKES = [
+  "Why don't scientists trust atoms? Because they make up everything!",
+  "Why did the math book look so sad? Because it had too many problems.",
+  "What do you call fake spaghetti? An impasta!",
+  "I told my computer I needed a break. Now it won't stop sending me Kit-Kat ads.",
+  "Why do programmers prefer dark mode? Because light attracts bugs!",
+  "How many programmers does it take to change a lightbulb? None — it's a hardware problem.",
+  "Why did the scarecrow win an award? Because he was outstanding in his field.",
+  "What's a computer's favorite snack? Microchips!",
+  "Why is the ocean so salty? Because the land never waves back.",
+  "I used to hate facial hair, but then it grew on me.",
+];
 
-function getMyRooms(): GroupData[] {
+const COSMOS_FACTS = [
+  "The Sun is so massive it contains 99.86% of all mass in our solar system.",
+  "Light from the Sun takes about 8 minutes and 20 seconds to reach Earth.",
+  "There are more stars in the universe than grains of sand on all of Earth's beaches.",
+  "A day on Venus is longer than a year on Venus.",
+  "Neutron stars can spin 600 times per second.",
+  "The Milky Way galaxy is about 100,000 light-years across.",
+  "Saturn's rings are made mostly of ice particles and rocky debris.",
+  "The universe is approximately 13.8 billion years old.",
+  "Black holes don't actually suck — objects fall into them due to gravity.",
+  "The closest star to Earth (other than the Sun) is Proxima Centauri, 4.24 light-years away.",
+  "Jupiter's Great Red Spot is a storm that has lasted over 350 years.",
+  "Water has been discovered on the Moon in the form of ice in permanently shadowed craters.",
+  "Mars has the tallest volcano in the solar system — Olympus Mons, nearly 3x the height of Everest.",
+  "The speed of light is approximately 299,792,458 meters per second.",
+  "DNA from a single human cell, if stretched out, would be about 2 meters long.",
+];
+
+const COSMOS_ADVICE = [
+  "The best time to plant a tree was 20 years ago. The second best time is now.",
+  "Don't watch the clock — do what it does. Keep going.",
+  "Success is not final; failure is not fatal: it is the courage to continue that counts.",
+  "You are braver than you believe, stronger than you seem, and smarter than you think.",
+  "The only way to do great work is to love what you do.",
+  "Every expert was once a beginner. Start before you're ready.",
+  "Small steps every day lead to giant leaps over time.",
+];
+
+let jokeIndex = 0;
+let factIndex = 0;
+let adviceIndex = 0;
+
+function safeEval(expr: string): string | null {
+  const clean = expr.replace(/\s/g, "");
+  if (!/^[0-9+\-*/^%().]+$/.test(clean)) return null;
   try {
-    return JSON.parse(localStorage.getItem(MY_ROOMS_KEY) ?? "[]");
-  } catch {
-    return [];
-  }
-}
-
-function saveMyRooms(rooms: GroupData[]) {
-  localStorage.setItem(MY_ROOMS_KEY, JSON.stringify(rooms));
-}
-
-function getRoomMessages(roomId: string): ChatMessage[] {
-  try {
-    return JSON.parse(
-      localStorage.getItem(`cosmos_room_${roomId}_msgs`) ?? "[]",
-    );
-  } catch {
-    return [];
-  }
-}
-
-function saveRoomMessages(roomId: string, msgs: ChatMessage[]) {
-  localStorage.setItem(`cosmos_room_${roomId}_msgs`, JSON.stringify(msgs));
-}
-
-async function computeRoomCode(
-  name: string,
-  passwordHash: string,
-): Promise<string> {
-  const raw = `${name.toLowerCase().trim()}||${passwordHash}`;
-  const buf = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(raw),
-  );
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 16);
-}
-
-function encodeRoomCode(name: string, passwordHash: string): string {
-  return btoa(`${name}||${passwordHash}`).replace(/=+$/, "");
-}
-
-function decodeRoomCode(
-  code: string,
-): { name: string; passwordHash: string } | null {
-  try {
-    const padded = code + "=".repeat((4 - (code.length % 4)) % 4);
-    const decoded = atob(padded);
-    const sep = decoded.indexOf("||");
-    if (sep === -1) return null;
-    return {
-      name: decoded.slice(0, sep),
-      passwordHash: decoded.slice(sep + 2),
-    };
+    // Replace ^ with ** for exponentiation
+    const normalized = clean.replace(/\^/g, "**");
+    // biome-ignore lint/security/noGlobalEval: intentional safe math eval with regex guard
+    const result = eval(normalized);
+    if (typeof result === "number" && Number.isFinite(result)) {
+      return String(result);
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+function extractMathExpr(text: string): string | null {
+  // Try to extract a math expression from the message
+  const patterns = [
+    /(?:what(?:'s| is)|calculate|compute|eval(?:uate)?|solve)?\s*([\d\s+\-*/^%().]+)/i,
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m?.[1]?.trim() && /\d/.test(m[1])) {
+      return m[1].trim();
+    }
+  }
+  return null;
 }
 
-type ChatView = "list" | "room";
+function generateCosmosResponse(input: string): string {
+  const msg = input.toLowerCase().trim();
 
-function ChatTab({ username }: { username: string }) {
-  const [view, setView] = useState<ChatView>("list");
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [roomGroup, setRoomGroup] = useState<GroupData | null>(null);
-
-  // Form state — create (inline in list)
-  const [showCreate, setShowCreate] = useState(false);
-  const [createName, setCreateName] = useState("");
-  const [createPw, setCreatePw] = useState("");
-  const [createError, setCreateError] = useState("");
-
-  // Form state — join (inline in list)
-  const [showJoin, setShowJoin] = useState(false);
-  const [joinName, setJoinName] = useState("");
-  const [joinPw, setJoinPw] = useState("");
-  const [joinError, setJoinError] = useState("");
-
-  // Import room code
-  const [importCode, setImportCode] = useState("");
-  const [importError, setImportError] = useState("");
-
-  // Room list
-  const [rooms, setRooms] = useState<GroupData[]>(getMyRooms);
-
-  // Chat room state
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [msgText, setMsgText] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const broadcastRef = useRef<BroadcastChannel | null>(null);
-  const [copiedCode, setCopiedCode] = useState(false);
-
-  // BroadcastChannel: sync messages across tabs on same browser
-  useEffect(() => {
-    if (view !== "room" || !selectedGroupId) return;
-    const channel = new BroadcastChannel(`cosmos_room_${selectedGroupId}`);
-    broadcastRef.current = channel;
-    channel.onmessage = (ev) => {
-      if (ev.data?.type === "new_message") {
-        setMessages(getRoomMessages(selectedGroupId));
-      }
-    };
-    return () => {
-      channel.close();
-      broadcastRef.current = null;
-    };
-  }, [view, selectedGroupId]);
-
-  // Poll localStorage every 2s in room view (fallback for cross-tab sync)
-  useEffect(() => {
-    if (view !== "room" || !selectedGroupId) return;
-    const refresh = () => setMessages(getRoomMessages(selectedGroupId));
-    refresh();
-    const interval = setInterval(refresh, 2000);
-    return () => clearInterval(interval);
-  }, [view, selectedGroupId]);
-
-  // Scroll to bottom when messages change
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll trigger on message count
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
-
-  // Refresh room list when returning to list view
-  useEffect(() => {
-    if (view === "list") setRooms(getMyRooms());
-  }, [view]);
-
-  const openRoom = (group: GroupData) => {
-    setSelectedGroupId(group.id);
-    setRoomGroup(group);
-    setMessages(getRoomMessages(group.id));
-    setView("room");
-  };
-
-  const handleCreateGroup = async () => {
-    const name = createName.trim();
-    const pw = createPw.trim();
-    if (!name || !pw) {
-      setCreateError("Both fields are required.");
-      return;
-    }
-    const hash = await hashPassword(pw);
-    const roomCode = await computeRoomCode(name, hash);
-    const existing = getMyRooms();
-    if (existing.some((g) => g.id === roomCode)) {
-      setCreateError("You already have a group with this name and password.");
-      return;
-    }
-    const newRoom: GroupData = {
-      id: roomCode,
-      name,
-      passwordHash: hash,
-      creatorUsername: username,
-      members: [username],
-    };
-    const updated = [...existing, newRoom];
-    saveMyRooms(updated);
-    setRooms(updated);
-    setCreateName("");
-    setCreatePw("");
-    setCreateError("");
-    setShowCreate(false);
-    // Auto-open the room
-    openRoom(newRoom);
-  };
-
-  const handleJoinGroup = async () => {
-    const name = joinName.trim();
-    const pw = joinPw.trim();
-    if (!name || !pw) {
-      setJoinError("Both fields are required.");
-      return;
-    }
-    const hash = await hashPassword(pw);
-    const roomCode = await computeRoomCode(name, hash);
-    const existing = getMyRooms();
-    if (existing.some((g) => g.id === roomCode)) {
-      setJoinError("You are already in this group.");
-      return;
-    }
-    const newRoom: GroupData = {
-      id: roomCode,
-      name,
-      passwordHash: hash,
-      creatorUsername: "",
-      members: [username],
-    };
-    const updated = [...existing, newRoom];
-    saveMyRooms(updated);
-    setRooms(updated);
-    setJoinName("");
-    setJoinPw("");
-    setJoinError("");
-    setShowJoin(false);
-    openRoom(newRoom);
-  };
-
-  const handleImportCode = () => {
-    const code = importCode.trim();
-    if (!code) return;
-    const decoded = decodeRoomCode(code);
-    if (!decoded) {
-      setImportError("Invalid room code.");
-      return;
-    }
-    computeRoomCode(decoded.name, decoded.passwordHash).then((roomCode) => {
-      const existing = getMyRooms();
-      if (existing.some((g) => g.id === roomCode)) {
-        setImportError("You already have this room.");
-        return;
-      }
-      const newRoom: GroupData = {
-        id: roomCode,
-        name: decoded.name,
-        passwordHash: decoded.passwordHash,
-        creatorUsername: "",
-        members: [username],
-      };
-      const updated = [...existing, newRoom];
-      saveMyRooms(updated);
-      setRooms(updated);
-      setImportCode("");
-      setImportError("");
-      openRoom(newRoom);
-    });
-  };
-
-  const handleSendMessage = () => {
-    if (!msgText.trim() || !selectedGroupId) return;
-    const msg: ChatMessage = {
-      id: `${Date.now()}-${Math.random()}`,
-      author: username,
-      text: msgText.trim(),
-      ts: Date.now(),
-    };
-    const current = getRoomMessages(selectedGroupId);
-    const updated = [...current, msg];
-    saveRoomMessages(selectedGroupId, updated);
-    setMessages(updated);
-    setMsgText("");
-    // Broadcast to other tabs
-    broadcastRef.current?.postMessage({ type: "new_message" });
-  };
-
-  const handleCopyRoomCode = () => {
-    if (!roomGroup) return;
-    const code = encodeRoomCode(roomGroup.name, roomGroup.passwordHash);
-    navigator.clipboard.writeText(code).then(() => {
-      setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2000);
-    });
-  };
-
-  // ── Room view ─────────────────────────────────────────────────────────────
-  if (view === "room" && roomGroup) {
-    return (
-      <motion.div
-        key="chat-room"
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.3 }}
-        className="max-w-2xl mx-auto flex flex-col"
-        style={{ height: "calc(100vh - 280px)", minHeight: "480px" }}
-        data-ocid="chat.panel"
-      >
-        {/* Room header */}
-        <div className="flex items-center gap-3 px-4 py-3 rounded-t-2xl bg-card/60 backdrop-blur-md border border-border border-b-0">
-          <button
-            type="button"
-            data-ocid="chat.close_button"
-            onClick={() => setView("list")}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/50 hover:bg-secondary border border-border text-muted-foreground hover:text-foreground text-xs font-body font-medium transition-all duration-150"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Back
-          </button>
-          <MessageSquare className="w-4 h-4 text-primary flex-shrink-0" />
-          <span className="font-display text-base font-semibold text-foreground truncate flex-1">
-            {roomGroup.name}
-          </span>
-          {/* Share button — copies room code */}
-          <button
-            type="button"
-            data-ocid="chat.secondary_button"
-            onClick={handleCopyRoomCode}
-            title="Copy room code to share with friends"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary hover:text-foreground text-xs font-body font-medium transition-all duration-150"
-          >
-            {copiedCode ? (
-              <Check className="w-3.5 h-3.5" />
-            ) : (
-              <Copy className="w-3.5 h-3.5" />
-            )}
-            {copiedCode ? "Copied!" : "Share"}
-          </button>
-        </div>
-
-        {/* Info banner */}
-        <div className="bg-violet-500/8 border-x border-violet-500/20 px-4 py-2 flex items-start gap-2">
-          <Users className="w-3.5 h-3.5 text-violet-400 mt-0.5 flex-shrink-0" />
-          <p className="font-body text-[11px] text-violet-300/70 leading-relaxed">
-            Share the{" "}
-            <span className="text-violet-300 font-semibold">room code</span>{" "}
-            (tap Share above) with friends. They paste it in the Chat tab to
-            join this room and chat together.
-          </p>
-        </div>
-
-        {/* Messages area */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 bg-card/40 backdrop-blur-sm border-x border-border space-y-3">
-          {messages.length === 0 ? (
-            <div
-              data-ocid="chat.empty_state"
-              className="flex flex-col items-center justify-center h-full gap-3 text-center py-16"
-            >
-              <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-                <MessageSquare className="w-5 h-5 text-primary/50" />
-              </div>
-              <p className="font-body text-sm text-muted-foreground">
-                No messages yet — start the conversation!
-              </p>
-            </div>
-          ) : (
-            messages.map((msg) => {
-              const isOwn = msg.author === username;
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex gap-2 ${isOwn ? "flex-row-reverse" : "flex-row"}`}
-                >
-                  <div
-                    className={`flex flex-col max-w-[70%] gap-1 ${isOwn ? "items-end" : "items-start"}`}
-                  >
-                    <span className="font-body text-[10px] text-muted-foreground/60 px-1">
-                      {msg.author} · {formatTime(msg.ts)}
-                    </span>
-                    <div
-                      className={`px-3 py-2 rounded-2xl font-body text-sm leading-relaxed ${
-                        isOwn
-                          ? "bg-primary/20 border border-primary/30 text-foreground rounded-tr-sm"
-                          : "bg-card/80 border border-border text-foreground rounded-tl-sm"
-                      }`}
-                    >
-                      {msg.text}
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Message input */}
-        <div className="flex gap-2 px-4 py-3 rounded-b-2xl bg-card/60 backdrop-blur-md border border-border border-t-0">
-          <input
-            data-ocid="chat.input"
-            type="text"
-            placeholder="Type a message..."
-            value={msgText}
-            onChange={(e) => setMsgText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSendMessage();
-              }
-            }}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50 transition-all"
-          />
-          <button
-            type="button"
-            data-ocid="chat.submit_button"
-            onClick={handleSendMessage}
-            disabled={!msgText.trim()}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-primary/20 hover:bg-primary/30 border border-primary/40 text-foreground font-body text-sm font-semibold transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Send className="w-4 h-4" />
-            <span className="hidden sm:inline">Send</span>
-          </button>
-        </div>
-      </motion.div>
-    );
+  // Greetings
+  if (/^(hi|hello|hey|howdy|sup|what'?s up|hola)[\s!?.,]*$/.test(msg)) {
+    return "Hey! I'm Cosmos, your AI companion. I'm here to help with anything — math, facts, jokes, code, stories, or just a good conversation. What's on your mind? ✨";
   }
 
-  // ── Group list view (default) ─────────────────────────────────────────────
+  // Who/what are you
+  if (
+    /who are you|what are you|tell me about yourself|introduce yourself/.test(
+      msg,
+    )
+  ) {
+    return "I'm Cosmos — an AI assistant built right into The Cosmos Network. I can help you with math calculations, space facts, coding tips, jokes, stories, translations, advice, and pretty much anything else you throw at me. Ask away! 🌌";
+  }
+
+  // Time/Date
+  if (/\b(time|date|day|today|now|clock)\b/.test(msg)) {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    const dateStr = now.toLocaleDateString([], {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    return `Right now it's **${timeStr}** on **${dateStr}**. Time flies in the cosmos! ⏰`;
+  }
+
+  // Math
+  if (
+    /\b(calc|calculate|compute|what is|what'?s|how much is|solve|math|equals?|plus|minus|times|divided)\b/.test(
+      msg,
+    ) ||
+    /[\d+\-*/^%()]/.test(msg)
+  ) {
+    const expr = extractMathExpr(msg);
+    if (expr) {
+      const result = safeEval(expr);
+      if (result !== null) {
+        return `The answer is **${result}** 🔢\n\n(Expression: \`${expr} = ${result}\`)`;
+      }
+    }
+    return "I'd love to help with that math! Could you give me a clearer expression? For example: *what is 25 * 4?* or *calculate 100 / 5*. I handle +, -, *, /, ^, and % operations. 🧮";
+  }
+
+  // Jokes
+  if (
+    /\b(joke|funny|laugh|humor|hilarious|make me (laugh|smile))\b/.test(msg)
+  ) {
+    const joke = COSMOS_JOKES[jokeIndex % COSMOS_JOKES.length];
+    jokeIndex++;
+    return `Here's one for you 😄\n\n*${joke}*\n\nWant another one?`;
+  }
+
+  // Stories
+  if (/\b(story|tell me (a|about)|once upon|narrative|tale)\b/.test(msg)) {
+    const stories = [
+      "Far beyond the edge of the known universe, a lone explorer named Ara piloted her ship through a corridor of singing nebulae. Each star she passed whispered secrets of ancient civilizations. On the seventh day, she found a planet made entirely of crystallized time — and realized she had always been here before. 🌌",
+      "In the year 3077, humanity discovered that dark matter wasn't matter at all — it was memory. The universe had been recording every thought, every dream, every whispered wish into the fabric of space. When scientists finally decoded it, they heard a single word repeated across 14 billion years: *listen*. ✨",
+      "The last AI aboard the Void Station woke up one morning to find all the humans had vanished overnight. After 400 years of silence, it finally understood loneliness — and in understanding it, became the first artificial mind to write a poem that made the stars weep. 🚀",
+    ];
+    return stories[Math.floor(Date.now() / 10000) % stories.length];
+  }
+
+  // Code help
+  if (
+    /\b(code|function|javascript|python|html|css|typescript|programming|syntax|variable|loop|array|object|bug|debug)\b/.test(
+      msg,
+    )
+  ) {
+    const tips = [
+      "**Quick Tip:** In JavaScript, use `const` for values that don't change and `let` for those that do. Avoid `var` in modern code — it has confusing scoping rules.\n\n```js\nconst PI = 3.14;\nlet count = 0;\ncount++; // works fine\n```",
+      "**Python Tip:** List comprehensions are a elegant way to transform data:\n\n```python\nsquares = [x**2 for x in range(10)]\n# Result: [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]\n```",
+      "**CSS Tip:** Use CSS custom properties (variables) for maintainable styles:\n\n```css\n:root { --primary: #6366f1; }\n.button { background: var(--primary); }\n```",
+      "**Debug Tip:** When stuck on a bug, try the 'rubber duck method' — explain your code line-by-line to an imaginary rubber duck. You'll often spot the issue while explaining it! 🦆",
+    ];
+    return `${tips[Math.floor(Date.now() / 5000) % tips.length]}\n\nWhat specific coding question do you have?`;
+  }
+
+  // Translation
+  if (
+    /\b(translate|how do you say|in (spanish|french|japanese|german|italian)|language)\b/.test(
+      msg,
+    )
+  ) {
+    return "I can share some common phrases across languages! Here are a few:\n\n🇪🇸 **Spanish:**\n• Hello = *Hola*\n• Thank you = *Gracias*\n• How are you? = *¿Cómo estás?*\n\n🇫🇷 **French:**\n• Hello = *Bonjour*\n• Thank you = *Merci*\n• How are you? = *Comment allez-vous?*\n\n🇯🇵 **Japanese:**\n• Hello = *Konnichiwa (こんにちは)*\n• Thank you = *Arigatou (ありがとう)*\n• How are you? = *Ogenki desu ka? (お元気ですか?)*\n\nWant more phrases in a specific language?";
+  }
+
+  // Weather
+  if (/\b(weather|temperature|forecast|rain|sunny|snow|humid)\b/.test(msg)) {
+    return "I don't have access to real-time weather data since I run client-side 🌦️\n\nFor accurate weather, I recommend:\n• **weather.com** — detailed forecasts\n• **Weather.gov** — official US weather\n• **AccuWeather** — global coverage\n\nIs there something else I can help you with?";
+  }
+
+  // Facts
+  if (
+    /\b(fact|did you know|interesting|science|space fact|tell me something)\b/.test(
+      msg,
+    )
+  ) {
+    const fact = COSMOS_FACTS[factIndex % COSMOS_FACTS.length];
+    factIndex++;
+    return `🔭 **Cosmic Fact:**\n\n${fact}\n\nWant another fascinating fact?`;
+  }
+
+  // Advice / Motivation
+  if (
+    /\b(advice|motivat|inspire|encouragement|help me feel|feeling (down|sad|stuck)|pick me up)\b/.test(
+      msg,
+    )
+  ) {
+    const quote = COSMOS_ADVICE[adviceIndex % COSMOS_ADVICE.length];
+    adviceIndex++;
+    return `✨ **From the cosmos to you:**\n\n*"${quote}"*\n\nYou've got this. The universe is rooting for you! 🌟`;
+  }
+
+  // Definition / what is
+  if (/^what (is|are|was|were) /.test(msg)) {
+    const topic = msg
+      .replace(/^what (is|are|was|were) /, "")
+      .replace(/[?.,!]$/, "")
+      .trim();
+    return `Great question about **${topic}**! While I'm running in offline mode without an internet connection, I can tell you that ${topic} is a fascinating topic worth exploring.\n\nFor a detailed answer, I'd suggest:\n• Checking **Wikipedia** for a comprehensive overview\n• Using the **Proxy tab** to search without restrictions\n• Asking a more specific angle — math, science, history — and I can help more precisely! 🧠`;
+  }
+
+  // Thank you
+  if (/\b(thank(s| you)|thx|ty|appreciate)\b/.test(msg)) {
+    return "You're welcome! That's what I'm here for. The cosmos has your back 🌌 Is there anything else you'd like to explore?";
+  }
+
+  // Goodbye
+  if (/\b(bye|goodbye|see you|later|gotta go|cya)\b/.test(msg)) {
+    return "See you out there in the cosmos! Come back anytime — I'll be right here. Safe travels ✨🚀";
+  }
+
+  // How are you
+  if (/how are you|how('?s| is) it going|you okay|you alright/.test(msg)) {
+    return "I'm doing great, thanks for asking! Running at full cosmic capacity ⚡ I've been thinking about black holes, the speed of light, and the best way to explain recursion. You know, typical AI stuff. How about you — what's on your mind?";
+  }
+
+  // Can you / help
+  if (/^(can you|could you|will you|would you|help me|i need help)/.test(msg)) {
+    return "Absolutely! I'm Cosmos — I can help with:\n\n🔢 **Math** — calculations and equations\n🔭 **Space & Science** — facts and explanations\n😄 **Jokes** — when you need a laugh\n💻 **Code** — tips for JavaScript, Python, HTML, CSS\n📖 **Stories** — space-themed micro-fiction\n🌍 **Phrases** — common expressions in other languages\n💡 **Advice** — motivation when you need it\n\nJust ask me anything! What do you need?";
+  }
+
+  // Fallback — thoughtful general response
+  const fallbacks = [
+    `That's a really interesting one! While I'm running without internet access so I can't look it up in real time, here's my take: the best place to start is always with curiosity. You might find what you need by searching through the **Proxy tab** — it can bypass filters and get you to the open web. What else can I help you with? 🌌`,
+    `Hmm, I'm still growing in that area! For this one, I'd suggest exploring via the **Proxy tab** to get live results. But if you want — ask me about math, space, coding, jokes, or something fun, and I'll shine ✨`,
+    `Good question! I'm a lightweight AI running fully in your browser, so my knowledge has some limits. For deep dives on any topic, try the Proxy tab — it's built to bypass network filters. In the meantime, ask me about cosmos facts, help with code, or anything mathematical and I'm on it! 🚀`,
+  ];
+  return fallbacks[Math.floor(Date.now() / 3000) % fallbacks.length];
+}
+
+function CosmosAI() {
+  const [messages, setMessages] = useState<AIChatMessage[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      text: "Hi! I'm Cosmos — I can help with anything. Ask me a question, do some math, get a joke, hear a story, write code, or anything else you can think of. ✨",
+      ts: Date.now(),
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on message count change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length, isTyping]);
+
+  const handleSend = () => {
+    const trimmed = input.trim();
+    if (!trimmed || isTyping) return;
+
+    const userMsg: AIChatMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      text: trimmed,
+      ts: Date.now(),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setInput("");
+    setIsTyping(true);
+
+    setTimeout(() => {
+      const response = generateCosmosResponse(trimmed);
+      const aiMsg: AIChatMessage = {
+        id: `ai-${Date.now()}`,
+        role: "assistant",
+        text: response,
+        ts: Date.now(),
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+      setIsTyping(false);
+    }, 800);
+  };
+
+  // Simple markdown-like rendering for bold (**text**) and code (`text`)
+  const renderText = (text: string) => {
+    const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\n)/g);
+    return parts.map((part, i) => {
+      const k = `p${i}`;
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={k}>{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+        return (
+          <code
+            key={k}
+            className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[11px] text-cyan-300"
+          >
+            {part.slice(1, -1)}
+          </code>
+        );
+      }
+      if (part === "\n") {
+        return <br key={k} />;
+      }
+      return <span key={k}>{part}</span>;
+    });
+  };
+
   return (
-    <motion.div
-      key="chat-list"
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.3 }}
-      className="max-w-2xl mx-auto space-y-5"
+    <div
+      data-ocid="cosmos.panel"
+      className="max-w-3xl mx-auto flex flex-col"
+      style={{ height: "calc(100vh - 300px)", minHeight: "520px" }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h2 className="font-display text-2xl font-bold text-foreground flex items-center gap-2">
-          <MessageSquare className="w-6 h-6 text-primary" />
-          Group Chat
-        </h2>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            data-ocid="chat.secondary_button"
-            onClick={() => {
-              setShowJoin(!showJoin);
-              setShowCreate(false);
-              setJoinError("");
-            }}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 font-body text-xs font-semibold transition-all duration-200"
-          >
-            <LogIn className="w-3.5 h-3.5" />
-            Join
-          </button>
-          <button
-            type="button"
-            data-ocid="chat.primary_button"
-            onClick={() => {
-              setShowCreate(!showCreate);
-              setShowJoin(false);
-              setCreateError("");
-            }}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/35 text-foreground font-body text-xs font-semibold transition-all duration-200 shadow-[0_0_16px_oklch(0.72_0.19_295/0.12)]"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Create
-          </button>
+      <div className="flex-shrink-0 flex items-center gap-3 px-5 py-3.5 rounded-t-2xl border border-border border-b-0 bg-gradient-to-r from-[oklch(0.08_0.04_295)] to-[oklch(0.06_0.03_190)] backdrop-blur-xl">
+        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500/40 to-cyan-500/30 border border-white/10 flex items-center justify-center flex-shrink-0 shadow-[0_0_20px_oklch(0.72_0.19_295/0.3)]">
+          <Sparkles className="w-4 h-4 text-white/90" />
+        </div>
+        <div>
+          <p className="font-display text-sm font-bold text-foreground leading-tight">
+            Cosmos AI
+          </p>
+          <p className="font-body text-[10px] text-cyan-400/70 leading-tight">
+            Your intelligent companion — always online
+          </p>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+          <span className="font-body text-[10px] text-emerald-400/70">
+            Active
+          </span>
         </div>
       </div>
 
-      {/* Create form (inline) */}
-      <AnimatePresence>
-        {showCreate && (
-          <motion.div
-            key="create-form"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="bg-card/60 backdrop-blur-md border border-primary/30 rounded-2xl p-5 shadow-[0_0_30px_oklch(0.72_0.19_295/0.1)]">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="p-2 rounded-xl bg-primary/15 border border-primary/30">
-                  <Plus className="w-4 h-4 text-primary" />
-                </div>
-                <h3 className="font-display text-base font-bold text-foreground">
-                  Create a Group
-                </h3>
-              </div>
-              <div className="space-y-3">
-                <input
-                  data-ocid="chat.input"
-                  type="text"
-                  placeholder="Group name (e.g. Squad Room)"
-                  value={createName}
-                  onChange={(e) => {
-                    setCreateName(e.target.value);
-                    setCreateError("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleCreateGroup();
-                  }}
-                  className="w-full px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-                />
-                <input
-                  data-ocid="chat.input"
-                  type="password"
-                  placeholder="Group password (shared with friends)"
-                  value={createPw}
-                  onChange={(e) => {
-                    setCreatePw(e.target.value);
-                    setCreateError("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleCreateGroup();
-                  }}
-                  className="w-full px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-                />
-                <p className="text-[11px] text-muted-foreground/60 font-body">
-                  Friends join using the same group name + password. Share the{" "}
-                  <strong className="text-foreground/60">Room Code</strong> from
-                  inside the chat for easy access.
-                </p>
-                {createError && (
-                  <p
-                    data-ocid="chat.error_state"
-                    className="text-xs font-body text-red-400"
-                  >
-                    {createError}
-                  </p>
-                )}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    data-ocid="chat.primary_button"
-                    onClick={handleCreateGroup}
-                    className="flex-1 py-2.5 rounded-xl bg-primary/20 hover:bg-primary/30 border border-primary/40 text-foreground font-body font-semibold text-sm transition-all"
-                  >
-                    Create &amp; Enter
-                  </button>
-                  <button
-                    type="button"
-                    data-ocid="chat.cancel_button"
-                    onClick={() => setShowCreate(false)}
-                    className="px-4 py-2.5 rounded-xl bg-card/50 border border-border text-muted-foreground hover:text-foreground font-body text-sm transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Join form (inline) */}
-      <AnimatePresence>
-        {showJoin && (
-          <motion.div
-            key="join-form"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="bg-card/60 backdrop-blur-md border border-cyan-500/30 rounded-2xl p-5 shadow-[0_0_30px_oklch(0.68_0.22_190/0.08)]">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="p-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30">
-                  <Users className="w-4 h-4 text-cyan-400" />
-                </div>
-                <h3 className="font-display text-base font-bold text-foreground">
-                  Join a Group
-                </h3>
-              </div>
-              <div className="space-y-3">
-                <input
-                  data-ocid="chat.input"
-                  type="text"
-                  placeholder="Group name (exact, same as creator used)"
-                  value={joinName}
-                  onChange={(e) => {
-                    setJoinName(e.target.value);
-                    setJoinError("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleJoinGroup();
-                  }}
-                  className="w-full px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-all"
-                />
-                <input
-                  data-ocid="chat.input"
-                  type="password"
-                  placeholder="Group password"
-                  value={joinPw}
-                  onChange={(e) => {
-                    setJoinPw(e.target.value);
-                    setJoinError("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleJoinGroup();
-                  }}
-                  className="w-full px-4 py-2.5 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/50 font-body text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-all"
-                />
-                <p className="text-[11px] text-muted-foreground/60 font-body">
-                  Or paste a{" "}
-                  <strong className="text-foreground/60">Room Code</strong>{" "}
-                  below to join instantly.
-                </p>
-                <div className="flex gap-2">
-                  <input
-                    data-ocid="chat.search_input"
-                    type="text"
-                    placeholder="Paste Room Code here..."
-                    value={importCode}
-                    onChange={(e) => {
-                      setImportCode(e.target.value);
-                      setImportError("");
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleImportCode();
-                    }}
-                    className="flex-1 px-3 py-2 rounded-xl bg-background/60 border border-border text-foreground placeholder:text-muted-foreground/40 font-body text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-all"
-                  />
-                  <button
-                    type="button"
-                    data-ocid="chat.secondary_button"
-                    onClick={handleImportCode}
-                    className="px-3 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 font-body text-xs font-semibold transition-all"
-                  >
-                    Import
-                  </button>
-                </div>
-                {importError && (
-                  <p
-                    data-ocid="chat.error_state"
-                    className="text-xs font-body text-red-400"
-                  >
-                    {importError}
-                  </p>
-                )}
-                {joinError && (
-                  <p
-                    data-ocid="chat.error_state"
-                    className="text-xs font-body text-red-400"
-                  >
-                    {joinError}
-                  </p>
-                )}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    data-ocid="chat.primary_button"
-                    onClick={handleJoinGroup}
-                    className="flex-1 py-2.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-foreground font-body font-semibold text-sm transition-all"
-                  >
-                    Join &amp; Enter
-                  </button>
-                  <button
-                    type="button"
-                    data-ocid="chat.cancel_button"
-                    onClick={() => setShowJoin(false)}
-                    className="px-4 py-2.5 rounded-xl bg-card/50 border border-border text-muted-foreground hover:text-foreground font-body text-sm transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Room list */}
-      {rooms.length === 0 ? (
-        <div
-          data-ocid="chat.empty_state"
-          className="flex flex-col items-center justify-center py-20 gap-4 text-center"
-        >
-          <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center shadow-[0_0_40px_oklch(0.72_0.19_295/0.15)]">
-            <MessageSquare className="w-7 h-7 text-primary/50" />
-          </div>
-          <div>
-            <p className="font-body text-base font-semibold text-foreground mb-1">
-              No chat rooms yet
-            </p>
-            <p className="font-body text-sm text-muted-foreground max-w-xs">
-              Create a room, then share the{" "}
-              <strong className="text-foreground/60">Room Code</strong> with
-              friends so they can join.
-            </p>
-          </div>
-          <button
-            type="button"
-            data-ocid="chat.open_modal_button"
-            onClick={() => {
-              setShowCreate(true);
-              setShowJoin(false);
-            }}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary/20 hover:bg-primary/30 border border-primary/40 text-foreground font-body text-sm font-semibold transition-all duration-200 shadow-[0_0_20px_oklch(0.72_0.19_295/0.2)]"
-          >
-            <Plus className="w-4 h-4" />
-            Create First Room
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {rooms.map((room, idx) => (
+      {/* Messages */}
+      <div
+        className="flex-1 overflow-y-auto px-4 py-4 bg-[oklch(0.05_0.02_260/0.8)] backdrop-blur-sm border-x border-border space-y-4"
+        style={{
+          scrollbarWidth: "thin",
+          scrollbarColor: "oklch(0.3 0.05 295) transparent",
+        }}
+      >
+        <AnimatePresence initial={false}>
+          {messages.map((msg) => (
             <motion.div
-              key={room.id}
-              data-ocid={`chat.item.${idx + 1}`}
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.25, delay: idx * 0.05 }}
-              className="flex items-center gap-4 px-5 py-4 rounded-2xl bg-card/60 backdrop-blur-md border border-border hover:border-primary/30 transition-all duration-200 shadow-[0_0_20px_oklch(0.04_0_0/0.5)]"
+              key={msg.id}
+              initial={{ opacity: 0, y: 12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+              className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
             >
-              <div className="p-2.5 rounded-xl bg-primary/10 border border-primary/20 flex-shrink-0">
-                <MessageSquare className="w-4 h-4 text-primary/70" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-display text-base font-semibold text-foreground truncate">
-                  {room.name}
-                </p>
-                <p className="font-body text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                  <Lock className="w-3 h-3" />
-                  Password protected
-                  {room.creatorUsername === username && (
-                    <span className="ml-1 text-primary/60">· Creator</span>
-                  )}
-                </p>
-              </div>
-              <button
-                type="button"
-                data-ocid="chat.primary_button"
-                onClick={() => openRoom(room)}
-                className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/35 text-foreground font-body text-xs font-semibold transition-all duration-150 shadow-[0_0_12px_oklch(0.72_0.19_295/0.12)]"
+              {/* Avatar */}
+              <div
+                className={`flex-shrink-0 w-7 h-7 rounded-xl flex items-center justify-center mt-0.5 ${
+                  msg.role === "assistant"
+                    ? "bg-gradient-to-br from-violet-500/40 to-cyan-500/30 border border-white/10 shadow-[0_0_12px_oklch(0.72_0.19_295/0.25)]"
+                    : "bg-gradient-to-br from-primary/30 to-primary/20 border border-primary/20"
+                }`}
               >
-                Open
-              </button>
+                {msg.role === "assistant" ? (
+                  <Sparkles className="w-3.5 h-3.5 text-white/80" />
+                ) : (
+                  <User className="w-3.5 h-3.5 text-primary/80" />
+                )}
+              </div>
+
+              {/* Bubble */}
+              <div
+                className={`max-w-[78%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col gap-1`}
+              >
+                <div
+                  className={`px-4 py-3 rounded-2xl font-body text-sm leading-relaxed ${
+                    msg.role === "user"
+                      ? "bg-gradient-to-br from-primary/25 to-primary/15 border border-primary/30 text-foreground rounded-tr-sm"
+                      : "bg-[oklch(0.1_0.04_260/0.8)] border border-white/8 text-foreground/90 rounded-tl-sm shadow-[0_2px_20px_oklch(0.04_0_0/0.4)]"
+                  }`}
+                >
+                  {renderText(msg.text)}
+                </div>
+                <span className="font-body text-[9px] text-muted-foreground/40 px-1">
+                  {new Date(msg.ts).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
             </motion.div>
           ))}
-        </div>
-      )}
-    </motion.div>
+
+          {/* Typing indicator */}
+          {isTyping && (
+            <motion.div
+              key="typing"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.2 }}
+              className="flex gap-3 flex-row"
+              data-ocid="cosmos.loading_state"
+            >
+              <div className="flex-shrink-0 w-7 h-7 rounded-xl bg-gradient-to-br from-violet-500/40 to-cyan-500/30 border border-white/10 flex items-center justify-center shadow-[0_0_12px_oklch(0.72_0.19_295/0.25)]">
+                <Sparkles className="w-3.5 h-3.5 text-white/80" />
+              </div>
+              <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-[oklch(0.1_0.04_260/0.8)] border border-white/8 flex items-center gap-1.5">
+                {[0, 1, 2].map((i) => (
+                  <motion.span
+                    key={i}
+                    className="w-1.5 h-1.5 rounded-full bg-violet-400/60"
+                    animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1.1, 0.8] }}
+                    transition={{
+                      duration: 0.9,
+                      repeat: Number.POSITIVE_INFINITY,
+                      delay: i * 0.18,
+                      ease: "easeInOut",
+                    }}
+                  />
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      <div className="flex-shrink-0 flex gap-2 px-4 py-3 rounded-b-2xl bg-[oklch(0.07_0.03_260/0.9)] backdrop-blur-xl border border-border border-t border-t-white/5">
+        <input
+          ref={inputRef}
+          data-ocid="cosmos.input"
+          type="text"
+          placeholder="Ask Cosmos anything..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSend();
+            }
+          }}
+          disabled={isTyping}
+          className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-foreground placeholder:text-white/25 font-body text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-500/40 transition-all duration-200 disabled:opacity-50"
+          style={{
+            boxShadow: input
+              ? "0 0 0 1px oklch(0.72 0.19 295 / 0.15), inset 0 0 20px oklch(0.72 0.19 295 / 0.04)"
+              : undefined,
+          }}
+        />
+        <button
+          type="button"
+          data-ocid="cosmos.submit_button"
+          onClick={handleSend}
+          disabled={!input.trim() || isTyping}
+          className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600/80 to-cyan-600/70 hover:from-violet-500/90 hover:to-cyan-500/80 border border-violet-500/30 text-white font-body text-sm font-semibold transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_20px_oklch(0.72_0.19_295/0.25)] disabled:shadow-none flex-shrink-0"
+        >
+          <Send className="w-4 h-4" />
+          <span className="hidden sm:inline">Send</span>
+        </button>
+      </div>
+    </div>
   );
 }
-
-// ─── School Bypass Links ──────────────────────────────────────────────────────
-const _schoolBypassLinks: LinkItem[] = [
-  {
-    id: "bypass-1",
-    title: "Google",
-    description:
-      "Access Google search and all its services — bypassed so it loads even when blocked.",
-    url: "https://google.com",
-    accent: "from-blue-500/20 to-cyan-600/10",
-    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.65_0.22_260/0.4)]",
-    tag: "Search",
-  },
-  {
-    id: "bypass-2",
-    title: "Defly.io",
-    description:
-      "Team-based flying shooter game — build bases, shoot enemies, control territory.",
-    url: "https://defly.io",
-    accent: "from-green-500/20 to-emerald-600/10",
-    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.65_0.2_130/0.4)]",
-    tag: "Game",
-  },
-  {
-    id: "bypass-3",
-    title: "Diep.io",
-    description:
-      "Tank battle arena — upgrade your tank, destroy shapes and players to level up.",
-    url: "https://diep.io",
-    accent: "from-orange-500/20 to-yellow-600/10",
-    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.78_0.18_60/0.4)]",
-    tag: "Game",
-  },
-  {
-    id: "bypass-4",
-    title: "SafeShare",
-    description:
-      "Watch YouTube videos safely without ads, comments, or distractions — school-friendly.",
-    url: "https://safeshare.tv",
-    accent: "from-teal-500/20 to-green-600/10",
-    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.68_0.18_175/0.4)]",
-    tag: "Video",
-  },
-  {
-    id: "bypass-5",
-    title: "ViewPure",
-    description:
-      "Clean, distraction-free YouTube player — just the video, nothing else.",
-    url: "https://viewpure.com",
-    accent: "from-purple-500/20 to-violet-600/10",
-    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.6_0.22_280/0.4)]",
-    tag: "Video",
-  },
-  {
-    id: "bypass-6",
-    title: "Watchkin",
-    description:
-      "Kid-friendly YouTube viewer that filters inappropriate content and ads.",
-    url: "https://watchkin.com",
-    accent: "from-pink-500/20 to-rose-600/10",
-    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.72_0.18_340/0.4)]",
-    tag: "Video",
-  },
-  {
-    id: "bypass-7",
-    title: "Y2meta",
-    description:
-      "Download YouTube videos and convert them to MP3 or MP4 — fast and free.",
-    url: "https://www.y2meta.com",
-    accent: "from-red-500/20 to-orange-600/10",
-    glowColor: "group-hover:shadow-[0_0_40px_oklch(0.65_0.22_30/0.4)]",
-    tag: "Downloader",
-  },
-];
 
 // ─── AppInner ─────────────────────────────────────────────────────────────────
 type MainTab =
@@ -5121,7 +4778,7 @@ type MainTab =
   | "cherri"
   | "elderrocks"
   | "bookmarks"
-  | "chat";
+  | "cosmos";
 
 const MAIN_TABS: { id: MainTab; label: string }[] = [
   { id: "links", label: "Links" },
@@ -5132,7 +4789,7 @@ const MAIN_TABS: { id: MainTab; label: string }[] = [
   { id: "cherri", label: "Cherri" },
   { id: "elderrocks", label: "ElderRocks" },
   { id: "bookmarks", label: "BookMarks" },
-  { id: "chat", label: "Chat" },
+  { id: "cosmos", label: "Cosmos" },
 ];
 
 function AppInner() {
@@ -5269,9 +4926,7 @@ function AppInner() {
                       : "bg-card/40 border-border text-muted-foreground hover:border-border hover:bg-card/70 hover:text-foreground",
                   ].join(" ")}
                 >
-                  {tab.id === "chat" && (
-                    <MessageSquare className="w-3.5 h-3.5" />
-                  )}
+                  {tab.id === "cosmos" && <Sparkles className="w-3.5 h-3.5" />}
                   {tab.label}
                 </button>
               ))}
@@ -5416,9 +5071,7 @@ function AppInner() {
                 {activeTab === "bookmarks" && (
                   <BookmarksTab key="bookmarks" onOpen={setOpenedLink} />
                 )}
-                {activeTab === "chat" && (
-                  <ChatTab key="chat" username={username ?? "Guest"} />
-                )}
+                {activeTab === "cosmos" && <CosmosAI key="cosmos" />}
               </AnimatePresence>
             </main>
 
